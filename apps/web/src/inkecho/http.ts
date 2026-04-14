@@ -8,3 +8,4 @@ export async function parseJsonOrThrow<T>(r: Response): Promise<T> {
   }
   return r.json() as Promise<T>;
 }
+

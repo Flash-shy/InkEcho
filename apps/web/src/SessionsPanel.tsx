@@ -3,6 +3,7 @@ import { useCallback, useEffect, useState } from "react";
 import { startMeetingMinutes } from "./inkecho";
 import { formatSegmentMeta, type TranscriptSegmentRow } from "./transcriptFormat";
 import type { SessionSummaryState } from "./sessionSummary";
+import { downloadTranscriptExport, TranscriptExportSelect } from "./TranscriptExportSelect";
 import { getStoredSessionsSelected, setStoredSessionsSelected } from "./uiPersistence";
 
 type SessionListItem = {
@@ -61,25 +62,6 @@ function formatShortDate(iso: string): string {
   } catch {
     return iso;
   }
-}
-
-async function downloadExport(sessionId: string, format: "md" | "txt" | "json"): Promise<void> {
-  const r = await fetch(`/api/sessions/${sessionId}/export?format=${format}`);
-  if (!r.ok) {
-    window.alert(`${r.status} ${await r.text()}`);
-    return;
-  }
-  const blob = await r.blob();
-  const cd = r.headers.get("Content-Disposition");
-  let name = `inkecho-${sessionId}.${format}`;
-  const m = cd?.match(/filename="([^"]+)"/);
-  if (m?.[1]) name = m[1];
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = name;
-  a.click();
-  URL.revokeObjectURL(url);
 }
 
 export function SessionsPanel({ active, sessionSummaries, mergeSessionSummary }: Props) {
@@ -349,7 +331,6 @@ export function SessionsPanel({ active, sessionSummaries, mergeSessionSummary }:
   const canSummarize = detail?.status === "ready" && segs.length > 0;
   const hasSummary = sumStatus === "ready" && Boolean(mergedSummary?.summary_text?.trim());
   const hasMinutes = minStatus === "ready" && Boolean(mergedSummary?.minutes_text?.trim());
-  const aiBusy = summarizing || minutesRunning;
 
   return (
     <div className="sessions-panel">
@@ -389,7 +370,7 @@ export function SessionsPanel({ active, sessionSummaries, mergeSessionSummary }:
           </ul>
         </aside>
 
-        <div className="sessions-detail">
+        <div className="sessions-detail card-inner">
           {detailLoading && (
             <p className="muted">
               <span className="spinner" aria-hidden /> Loading session…
@@ -404,12 +385,11 @@ export function SessionsPanel({ active, sessionSummaries, mergeSessionSummary }:
             <section className="transcript-block">
               <p className="muted transcribe-meta">
                 Session <code>{detail.id}</code>
-                {detail.title != null && detail.title !== "" && (
-                  <>
-                    {" · "}
-                    <span className="clip-queue-name">{detail.title}</span>
-                  </>
-                )}
+                {" · "}
+                <span className="clip-queue-name">{detail.title?.trim() ? detail.title : "(untitled)"}</span>
+              </p>
+              <p className="muted panel-lead sessions-title-hint">
+                Name is set from Listen / Transcribe before you run speech-to-text.
               </p>
               <p className="muted transcribe-meta">
                 Status <strong>{detail.status}</strong>
@@ -421,7 +401,7 @@ export function SessionsPanel({ active, sessionSummaries, mergeSessionSummary }:
                 ) : null}
               </p>
 
-              <div className="transcript-actions">
+              <div className="transcript-actions-row transcript-actions-ai">
                 <button
                   type="button"
                   className={`btn btn-small ${hasSummary ? "btn-secondary" : "btn-primary"}`}
@@ -458,30 +438,9 @@ export function SessionsPanel({ active, sessionSummaries, mergeSessionSummary }:
                 >
                   {minutesRunning ? "Minutes…" : hasMinutes ? "View minutes" : "Meeting minutes"}
                 </button>
-                <button
-                  type="button"
-                  className="btn btn-small"
-                  disabled={aiBusy}
-                  onClick={() => void downloadExport(detail.id, "md")}
-                >
-                  Export .md
-                </button>
-                <button
-                  type="button"
-                  className="btn btn-small"
-                  disabled={aiBusy}
-                  onClick={() => void downloadExport(detail.id, "txt")}
-                >
-                  Export .txt
-                </button>
-                <button
-                  type="button"
-                  className="btn btn-small"
-                  disabled={aiBusy}
-                  onClick={() => void downloadExport(detail.id, "json")}
-                >
-                  Export .json
-                </button>
+              </div>
+              <div className="transcript-actions-row transcript-actions-export">
+                <TranscriptExportSelect onChoose={(fmt) => void downloadTranscriptExport(detail.id, fmt)} />
               </div>
 
               {mergedSummary?.summary_error && (
@@ -507,19 +466,21 @@ export function SessionsPanel({ active, sessionSummaries, mergeSessionSummary }:
                 </div>
               )}
 
-              <h3 className="transcribe-result-h">Transcript</h3>
-              {segs.length === 0 ? (
-                <p className="muted">No segments yet (upload audio from Transcribe or wait for STT).</p>
-              ) : (
-                <ol className="segment-list">
-                  {segs.map((s) => (
-                    <li key={s.id} className="segment-item">
-                      <div className="segment-meta muted">{formatSegmentMeta(s, segs)}</div>
-                      <div className="segment-text">{s.text}</div>
-                    </li>
-                  ))}
-                </ol>
-              )}
+              <div className="transcript-segments-card">
+                <h3 className="transcribe-result-h">Transcript</h3>
+                {segs.length === 0 ? (
+                  <p className="muted transcript-segments-empty">No segments yet (upload audio from Transcribe or wait for STT).</p>
+                ) : (
+                  <ol className="segment-list">
+                    {segs.map((s) => (
+                      <li key={s.id} className="segment-item">
+                        <div className="segment-meta muted">{formatSegmentMeta(s, segs)}</div>
+                        <div className="segment-text">{s.text}</div>
+                      </li>
+                    ))}
+                  </ol>
+                )}
+              </div>
             </section>
           )}
           {!detailLoading && !detail && !detailError && (

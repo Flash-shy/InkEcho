@@ -4,6 +4,7 @@ import { type CaptureKind, captureKindMeta } from "./captureTypes";
 import { startMeetingMinutes } from "./inkecho";
 import { formatSegmentMeta, type TranscriptSegmentRow } from "./transcriptFormat";
 import type { SessionSummaryState } from "./sessionSummary";
+import { downloadTranscriptExport, TranscriptExportSelect } from "./TranscriptExportSelect";
 import { getStoredTranscribeCompleted, setStoredTranscribeCompleted } from "./uiPersistence";
 
 export type TranscribeClip = { id: string; blob: Blob; label: string; captureKind: CaptureKind };
@@ -24,6 +25,11 @@ function formatSize(bytes: number): string {
   if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
   if (bytes >= 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${bytes} B`;
+}
+
+function displaySessionTitle(label: string): string {
+  const t = label.trim();
+  return t.length > 0 ? t : "(untitled)";
 }
 
 /** One finished transcription (kept when user runs another clip). */
@@ -48,6 +54,7 @@ type Props = {
   clips: TranscribeClip[];
   onRemoveClip: (id: string) => void;
   onClearQueue: () => void;
+  onSetClipLabel?: (id: string, label: string) => void;
   sessionSummaries: Record<string, SessionSummaryState>;
   mergeSessionSummary: (sessionId: string, patch: Partial<SessionSummaryState>) => void;
 };
@@ -56,6 +63,7 @@ export function TranscribePanel({
   clips,
   onRemoveClip,
   onClearQueue,
+  onSetClipLabel,
   sessionSummaries,
   mergeSessionSummary,
 }: Props) {
@@ -139,12 +147,13 @@ export function TranscribePanel({
         try {
           const r = await fetch(`/api/sessions/${item.key}`);
           if (!r.ok) continue;
-          const row = (await r.json()) as { segments?: WsSegment[] };
+          const row = (await r.json()) as { segments?: WsSegment[]; title?: string | null };
           const segs = Array.isArray(row.segments) ? row.segments.map((s) => ({ ...s })) : [];
+          const serverTitle = typeof row.title === "string" ? row.title.trim() : "";
           loaded.push({
             key: item.key,
             clipId: item.clipId,
-            clipLabel: item.clipLabel,
+            clipLabel: serverTitle || item.clipLabel,
             segments: segs,
           });
         } catch {
@@ -385,29 +394,6 @@ export function TranscribePanel({
     [pollMinutesUntilDone, mergeSessionSummary],
   );
 
-  const onExport = useCallback(async (sessionKey: string, format: "md" | "txt" | "json") => {
-    try {
-      const r = await fetch(`/api/sessions/${sessionKey}/export?format=${format}`);
-      if (!r.ok) {
-        window.alert(`${r.status} ${await r.text()}`);
-        return;
-      }
-      const blob = await r.blob();
-      const cd = r.headers.get("Content-Disposition");
-      let name = `inkecho-${sessionKey}.${format}`;
-      const m = cd?.match(/filename="([^"]+)"/);
-      if (m?.[1]) name = m[1];
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = name;
-      a.click();
-      URL.revokeObjectURL(url);
-    } catch (e) {
-      window.alert(e instanceof Error ? e.message : "Export failed");
-    }
-  }, []);
-
   const onTranscribe = useCallback(
     async (clip: TranscribeClip) => {
       teardownWs();
@@ -425,10 +411,11 @@ export function TranscribePanel({
 
       let sid: string;
       try {
+        const titlePayload = clip.label.trim().slice(0, 512);
         const cr = await fetch("/api/sessions", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({}),
+          body: JSON.stringify({ title: titlePayload.length > 0 ? titlePayload : null }),
         });
         if (!cr.ok) throw new Error(`${cr.status} ${await cr.text()}`);
         const created = (await cr.json()) as { id: string };
@@ -624,7 +611,15 @@ export function TranscribePanel({
                         {meta.tag}
                       </span>
                     </div>
-                    <span className="clip-queue-name">{c.label}</span>
+                    <input
+                      type="text"
+                      className="clip-title-input clip-queue-title-input"
+                      value={c.label}
+                      onChange={(e) => onSetClipLabel?.(c.id, e.target.value)}
+                      maxLength={512}
+                      disabled={thisClipRunning}
+                      aria-label="Clip name"
+                    />
                     <span className="clip-queue-hint muted">{meta.hint}</span>
                     <span className="muted">{formatSize(c.blob.size)}</span>
                   </div>
@@ -697,15 +692,14 @@ export function TranscribePanel({
           const minStatus = sum?.minutes_status ?? "idle";
           const minutesRunning = minStatus === "running";
           const hasMinutes = minStatus === "ready" && Boolean(sum?.minutes_text?.trim());
-          const aiBusy = summarizing || minutesRunning;
           return (
             <section key={run.key} id={`transcript-block-${run.key}`} className="transcript-block">
               <p className="muted transcribe-meta">
                 Session <code>{run.key}</code>
                 {" · "}
-                <span className="clip-queue-name">{run.clipLabel}</span>
+                <span className="clip-queue-name">{displaySessionTitle(run.clipLabel)}</span>
               </p>
-              <div className="transcript-actions">
+              <div className="transcript-actions-row transcript-actions-ai">
                 <button
                   type="button"
                   className={`btn btn-small ${hasSummary ? "btn-secondary" : "btn-primary"}`}
@@ -742,30 +736,9 @@ export function TranscribePanel({
                 >
                   {minutesRunning ? "Minutes…" : hasMinutes ? "View minutes" : "Meeting minutes"}
                 </button>
-                <button
-                  type="button"
-                  className="btn btn-small"
-                  disabled={aiBusy}
-                  onClick={() => void onExport(run.key, "md")}
-                >
-                  Export .md
-                </button>
-                <button
-                  type="button"
-                  className="btn btn-small"
-                  disabled={aiBusy}
-                  onClick={() => void onExport(run.key, "txt")}
-                >
-                  Export .txt
-                </button>
-                <button
-                  type="button"
-                  className="btn btn-small"
-                  disabled={aiBusy}
-                  onClick={() => void onExport(run.key, "json")}
-                >
-                  Export .json
-                </button>
+              </div>
+              <div className="transcript-actions-row transcript-actions-export">
+                <TranscriptExportSelect onChoose={(fmt) => void downloadTranscriptExport(run.key, fmt)} />
               </div>
               {sum?.summary_error && (
                 <div className="banner-err" role="alert">
@@ -789,20 +762,22 @@ export function TranscribePanel({
                   <pre className="summary-pre">{sum.minutes_text}</pre>
                 </div>
               )}
-              <h3 className="transcribe-result-h" id={`transcript-${run.key}`}>
-                Transcript · {run.clipLabel}
-              </h3>
-              <ol className="segment-list" aria-labelledby={`transcript-${run.key}`}>
-                {run.segments.map((s) => {
-                  const metaLine = formatSegmentMeta(s, run.segments);
-                  return (
-                    <li key={s.id} className="segment-item">
-                      <div className="segment-meta muted">{metaLine}</div>
-                      <div className="segment-text">{s.text}</div>
-                    </li>
-                  );
-                })}
-              </ol>
+              <div className="transcript-segments-card">
+                <h3 className="transcribe-result-h" id={`transcript-${run.key}`}>
+                  Transcript · {displaySessionTitle(run.clipLabel)}
+                </h3>
+                <ol className="segment-list" aria-labelledby={`transcript-${run.key}`}>
+                  {run.segments.map((s) => {
+                    const metaLine = formatSegmentMeta(s, run.segments);
+                    return (
+                      <li key={s.id} className="segment-item">
+                        <div className="segment-meta muted">{metaLine}</div>
+                        <div className="segment-text">{s.text}</div>
+                      </li>
+                    );
+                  })}
+                </ol>
+              </div>
             </section>
           );
         })}
@@ -818,20 +793,22 @@ export function TranscribePanel({
 
         {segments.length > 0 && resultLabel && sessionId && (phase === "running" || phase === "error") && (
           <section className="transcript-block transcript-block-current" aria-label="Current transcription">
-            <h3 className="transcribe-result-h" id={`transcript-${sessionId}-live`}>
-              Transcript · {resultLabel}
-            </h3>
-            <ol className="segment-list" aria-labelledby={`transcript-${sessionId}-live`}>
-              {segments.map((s) => {
-                const metaLine = formatSegmentMeta(s, segments);
-                return (
-                  <li key={s.id} className="segment-item">
-                    <div className="segment-meta muted">{metaLine}</div>
-                    <div className="segment-text">{s.text}</div>
-                  </li>
-                );
-              })}
-            </ol>
+            <div className="transcript-segments-card">
+              <h3 className="transcribe-result-h" id={`transcript-${sessionId}-live`}>
+                Transcript · {resultLabel}
+              </h3>
+              <ol className="segment-list" aria-labelledby={`transcript-${sessionId}-live`}>
+                {segments.map((s) => {
+                  const metaLine = formatSegmentMeta(s, segments);
+                  return (
+                    <li key={s.id} className="segment-item">
+                      <div className="segment-meta muted">{metaLine}</div>
+                      <div className="segment-text">{s.text}</div>
+                    </li>
+                  );
+                })}
+              </ol>
+            </div>
           </section>
         )}
 

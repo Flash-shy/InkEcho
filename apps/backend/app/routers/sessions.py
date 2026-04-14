@@ -11,7 +11,7 @@ from app.config import settings
 from app.db import get_db
 from app.models import Session as SessionModel
 from app.models import SessionStatus
-from app.schemas import AudioAccepted, SessionCreate, SessionOut, SessionSummary
+from app.schemas import AudioAccepted, SessionCreate, SessionOut, SessionSummary, SessionTitlePatch
 from app.services.export_session import (
     build_export_payload,
     export_as_json,
@@ -41,6 +41,18 @@ async def list_sessions(db: AsyncSession = Depends(get_db), limit: int = 50):
         select(SessionModel).order_by(SessionModel.created_at.desc()).limit(min(limit, 200))
     )
     return list(q.scalars().all())
+
+
+@router.patch("/{session_id}", response_model=SessionSummary)
+async def patch_session(session_id: UUID, body: SessionTitlePatch, db: AsyncSession = Depends(get_db)):
+    row = await db.get(SessionModel, session_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="Session not found")
+    t = body.title.strip()
+    row.title = t if t else None
+    await db.commit()
+    await db.refresh(row)
+    return row
 
 
 @router.get("/{session_id}", response_model=SessionOut)
@@ -160,20 +172,24 @@ async def start_meeting_minutes(
 async def export_session(
     session_id: UUID,
     export_format: Literal["md", "txt", "json"] = Query("json", alias="format"),
+    transcript_only: bool = Query(
+        False,
+        description="If true, omit summary and meeting minutes from text exports; JSON includes only id, title, segments.",
+    ),
 ):
     payload = await build_export_payload(session_id)
     if not payload:
         raise HTTPException(status_code=404, detail="Session not found")
     if export_format == "json":
-        body = export_as_json(payload)
+        body = export_as_json(payload, transcript_only=transcript_only)
         media = "application/json; charset=utf-8"
         ext = "json"
     elif export_format == "txt":
-        body = export_as_txt(payload)
+        body = export_as_txt(payload, transcript_only=transcript_only)
         media = "text/plain; charset=utf-8"
         ext = "txt"
     else:
-        body = export_as_md(payload)
+        body = export_as_md(payload, transcript_only=transcript_only)
         media = "text/markdown; charset=utf-8"
         ext = "md"
     fname = export_filename(session_id, ext)

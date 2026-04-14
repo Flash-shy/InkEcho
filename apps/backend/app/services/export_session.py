@@ -52,11 +52,19 @@ async def build_export_payload(session_id: UUID) -> dict[str, Any] | None:
         }
 
 
-def export_as_json(data: dict[str, Any]) -> str:
+def export_as_json(data: dict[str, Any], *, transcript_only: bool = False) -> str:
+    if transcript_only:
+        sess = data["session"]
+        slim: dict[str, Any] = {
+            "session_id": sess["id"],
+            "title": sess.get("title"),
+            "segments": data["segments"],
+        }
+        return json.dumps(slim, indent=2, ensure_ascii=False) + "\n"
     return json.dumps(data, indent=2, ensure_ascii=False) + "\n"
 
 
-def export_as_txt(data: dict[str, Any]) -> str:
+def export_as_txt(data: dict[str, Any], *, transcript_only: bool = False) -> str:
     sess = data["session"]
     lines: list[str] = []
     title = sess.get("title") or "InkEcho session"
@@ -67,18 +75,19 @@ def export_as_txt(data: dict[str, Any]) -> str:
     lines.append("--- Transcript ---")
     for s in data["segments"]:
         lines.append(f"[{s['seq']}] {s['text']}")
-    if sess.get("summary_text"):
-        lines.append("")
-        lines.append("--- Summary ---")
-        lines.append(sess["summary_text"])
-    if sess.get("minutes_text"):
-        lines.append("")
-        lines.append("--- Meeting minutes ---")
-        lines.append(sess["minutes_text"])
+    if not transcript_only:
+        if sess.get("summary_text"):
+            lines.append("")
+            lines.append("--- Summary ---")
+            lines.append(sess["summary_text"])
+        if sess.get("minutes_text"):
+            lines.append("")
+            lines.append("--- Meeting minutes ---")
+            lines.append(sess["minutes_text"])
     return "\n".join(lines).strip() + "\n"
 
 
-def export_as_md(data: dict[str, Any]) -> str:
+def export_as_md(data: dict[str, Any], *, transcript_only: bool = False) -> str:
     sess = data["session"]
     title = sess.get("title") or "InkEcho session"
     parts: list[str] = [f"# {title}", "", f"- **Session id:** `{sess['id']}`", f"- **Status:** {sess['status']}", ""]
@@ -92,16 +101,17 @@ def export_as_md(data: dict[str, Any]) -> str:
             meta = f" *({t0}–{t1} ms)*"
         parts.append(f"{s['seq'] + 1}. {s['text']}{meta}")
         parts.append("")
-    if sess.get("summary_text"):
-        parts.append("## Summary")
-        parts.append("")
-        parts.append(sess["summary_text"])
-        parts.append("")
-    if sess.get("minutes_text"):
-        parts.append("## Meeting minutes")
-        parts.append("")
-        parts.append(sess["minutes_text"])
-        parts.append("")
+    if not transcript_only:
+        if sess.get("summary_text"):
+            parts.append("## Summary")
+            parts.append("")
+            parts.append(sess["summary_text"])
+            parts.append("")
+        if sess.get("minutes_text"):
+            parts.append("## Meeting minutes")
+            parts.append("")
+            parts.append(sess["minutes_text"])
+            parts.append("")
     return "\n".join(parts).strip() + "\n"
 
 

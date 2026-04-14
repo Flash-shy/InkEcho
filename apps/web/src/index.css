@@ -520,6 +520,51 @@ code {
   max-width: 40rem;
 }
 
+.clip-title-label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  margin: 0.75rem 0 0;
+  width: 100%;
+  max-width: 32rem;
+}
+
+.clip-title-label-upload {
+  margin: 0.5rem 0 0;
+}
+
+.clip-title-label-text {
+  font-size: 0.8rem;
+  color: var(--muted-fg, #8b949e);
+}
+
+.clip-title-input {
+  width: 100%;
+  max-width: 32rem;
+  padding: 0.45rem 0.65rem;
+  border-radius: 8px;
+  border: 1px solid var(--border-subtle, #30363d);
+  background: var(--input-bg, var(--card-bg, #161b22));
+  color: inherit;
+  font: inherit;
+}
+
+.clip-title-input:focus-visible {
+  outline: 2px solid var(--focus-ring, #58a6ff);
+  outline-offset: 1px;
+}
+
+.clip-queue-title-input {
+  max-width: 14rem;
+  flex: 1;
+  min-width: 6rem;
+}
+
+.sessions-title-hint {
+  margin: 0.35rem 0 0.75rem;
+  font-size: 0.82rem;
+}
+
 .listen-mix-label input {
   margin-top: 0.2rem;
   flex-shrink: 0;
@@ -686,12 +731,77 @@ code {
   margin-bottom: 0;
 }
 
-.transcript-actions {
+/* Transcript body — same card treatment as .summary-block */
+.transcript-segments-card {
+  margin: 1rem 0 0;
+  padding: 0.85rem 1rem;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.transcript-segments-card .transcribe-result-h {
+  margin: 0 0 0.65rem;
+}
+
+.transcript-segments-card .segment-list {
+  margin: 0;
+  padding: 0 0 0 1.15rem;
+}
+
+.transcript-segments-empty {
+  margin: 0;
+  line-height: 1.5;
+}
+
+.transcript-actions-row {
   display: flex;
   flex-wrap: wrap;
   gap: 0.45rem;
-  margin: 0 0 0.85rem;
+  margin: 0 0 0.5rem;
   align-items: center;
+}
+
+.transcript-actions-export {
+  padding-top: 0.45rem;
+  margin: 0.15rem 0 0.85rem;
+  border-top: 1px solid var(--border);
+}
+
+.transcript-export-wrap {
+  display: flex;
+  align-items: center;
+}
+
+.transcript-export-label {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  margin: 0;
+  font-size: 0.82rem;
+  cursor: pointer;
+}
+
+.transcript-export-label-text {
+  color: var(--muted-fg, #8b949e);
+  font-weight: 600;
+  letter-spacing: 0.03em;
+}
+
+.export-transcript-select {
+  min-width: 10.5rem;
+  padding: 0.32rem 0.5rem;
+  border-radius: 8px;
+  border: 1px solid var(--border-subtle, #30363d);
+  background: var(--input-bg, var(--card-bg, #161b22));
+  color: inherit;
+  font: inherit;
+  font-size: 0.82rem;
+}
+
+.export-transcript-select:focus-visible {
+  outline: 2px solid var(--focus-ring, #58a6ff);
+  outline-offset: 1px;
 }
 
 .summary-block {
@@ -866,6 +976,12 @@ code {
   word-break: break-word;
 }
 
+.clip-queue-meta .clip-queue-title-input {
+  margin-top: 0.2rem;
+  width: 100%;
+  max-width: none;
+}
+
 .clip-queue-actions {
   display: flex;
   flex-wrap: wrap;
@@ -894,6 +1010,11 @@ code {
   align-items: start;
 }
 
+/* Right pane uses .card-inner like Recent — shared padding/border for column alignment */
+.sessions-detail.card-inner {
+  margin-bottom: 0;
+}
+
 @media (max-width: 720px) {
   .sessions-layout {
     grid-template-columns: 1fr;
@@ -904,6 +1025,10 @@ code {
   padding: 0.85rem 1rem;
   max-height: min(70vh, 28rem);
   overflow: auto;
+}
+
+.sessions-layout .sessions-list-card.card-inner {
+  margin-bottom: 0;
 }
 
 .sessions-list-title {

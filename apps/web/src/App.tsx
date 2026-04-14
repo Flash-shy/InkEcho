@@ -193,6 +193,9 @@ export default function App() {
             clips={transcribeQueue}
             onRemoveClip={(id) => setTranscribeQueue((q) => q.filter((c) => c.id !== id))}
             onClearQueue={() => setTranscribeQueue([])}
+            onSetClipLabel={(id, label) =>
+              setTranscribeQueue((q) => q.map((c) => (c.id === id ? { ...c, label } : c)))
+            }
             sessionSummaries={sessionSummaries}
             mergeSessionSummary={mergeSessionSummary}
           />

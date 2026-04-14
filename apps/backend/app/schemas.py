@@ -19,6 +19,12 @@ class SessionCreate(BaseModel):
     title: str | None = Field(default=None, max_length=512)
 
 
+class SessionTitlePatch(BaseModel):
+    """Replace session display title (empty string clears to untitled)."""
+
+    title: str = Field(default="", max_length=512)
+
+
 class SessionOut(BaseModel):
     id: UUID
     status: str

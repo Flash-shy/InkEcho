@@ -93,6 +93,10 @@ export function ListenPanel({ onClipReady }: ListenPanelProps) {
   const [recordingKind, setRecordingKind] = useState<CaptureKind | null>(null);
   const [uploadFile, setUploadFile] = useState<File | null>(null);
   const [uploadUrl, setUploadUrl] = useState<string | null>(null);
+  /** Display name for the queued upload (defaults to file name). */
+  const [uploadTitle, setUploadTitle] = useState("");
+  /** User-editable name before adding a finished recording to the queue. */
+  const [clipNameDraft, setClipNameDraft] = useState("");
   const [queueNotice, setQueueNotice] = useState<string | null>(null);
 
   const streamRef = useRef<MediaStream | null>(null);
@@ -174,6 +178,17 @@ export function ListenPanel({ onClipReady }: ListenPanelProps) {
     const t = window.setTimeout(() => setQueueNotice(null), 6500);
     return () => window.clearTimeout(t);
   }, [queueNotice]);
+
+  useEffect(() => {
+    if (phase === "stopped" && recordingLabel) {
+      setClipNameDraft(recordingLabel);
+    }
+  }, [phase, recordingLabel]);
+
+  useEffect(() => {
+    if (uploadFile) setUploadTitle(uploadFile.name);
+    else setUploadTitle("");
+  }, [uploadFile]);
 
   const startMeter = useCallback((stream: MediaStream) => {
     const audioTracks = stream.getAudioTracks();
@@ -265,6 +280,7 @@ export function ListenPanel({ onClipReady }: ListenPanelProps) {
     setRecordingBlob(null);
     setRecordingLabel(null);
     setRecordingKind(null);
+    setClipNameDraft("");
     setPhase("idle");
     setElapsedSec(0);
   }, [revokeRecordingObjectUrl]);
@@ -368,13 +384,14 @@ export function ListenPanel({ onClipReady }: ListenPanelProps) {
 
   const onAddRecordingToQueue = useCallback(() => {
     if (!recordingBlob || !onClipReady || !recordingKind) return;
-    onClipReady(recordingBlob, recordingLabel ?? "Recording", {
+    const name = clipNameDraft.trim() || recordingLabel || "Recording";
+    onClipReady(recordingBlob, name, {
       focusTranscribe: true,
       captureKind: recordingKind,
     });
     setQueueNotice("Added to the transcription queue.");
     clearFinishedPreview();
-  }, [recordingBlob, recordingLabel, recordingKind, onClipReady, clearFinishedPreview]);
+  }, [recordingBlob, recordingLabel, recordingKind, clipNameDraft, onClipReady, clearFinishedPreview]);
 
   const onDownload = useCallback(() => {
     if (!recordingBlob || !recordingUrl) return;
@@ -493,6 +510,18 @@ export function ListenPanel({ onClipReady }: ListenPanelProps) {
               </span>
             )}
           </div>
+          <label className="clip-title-label">
+            <span className="clip-title-label-text">Name for this clip</span>
+            <input
+              type="text"
+              className="clip-title-input"
+              value={clipNameDraft}
+              onChange={(e) => setClipNameDraft(e.target.value)}
+              maxLength={512}
+              placeholder="e.g. Weekly standup"
+              autoComplete="off"
+            />
+          </label>
           <audio className="audio-preview" controls src={recordingUrl} />
           <div className="rec-result-actions">
             {onClipReady && recordingBlob && recordingKind && (
@@ -523,14 +552,27 @@ export function ListenPanel({ onClipReady }: ListenPanelProps) {
               <div className="muted upload-file-meta">
                 <strong>{uploadFile.name}</strong> · {(uploadFile.size / (1024 * 1024)).toFixed(2)} MB
               </div>
+              <label className="clip-title-label clip-title-label-upload">
+                <span className="clip-title-label-text">Name for this clip</span>
+                <input
+                  type="text"
+                  className="clip-title-input"
+                  value={uploadTitle}
+                  onChange={(e) => setUploadTitle(e.target.value)}
+                  maxLength={512}
+                  placeholder="Shown in Sessions after transcribe"
+                  autoComplete="off"
+                />
+              </label>
               <div className="upload-preview-actions">
                 {onClipReady && (
                   <button
                     type="button"
                     className="btn btn-primary btn-small"
-                    onClick={() =>
-                      onClipReady(uploadFile, uploadFile.name, { captureKind: "upload", focusTranscribe: true })
-                    }
+                    onClick={() => {
+                      const name = uploadTitle.trim() || uploadFile.name;
+                      onClipReady(uploadFile, name, { captureKind: "upload", focusTranscribe: true });
+                    }}
                   >
                     Add to transcription queue
                   </button>

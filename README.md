@@ -32,9 +32,9 @@ InkEcho is **four deployable services** with narrow contracts so you can scale, 
 | **Frontend** (`apps/web`) | React SPA: capture UX, transcript UI, settings, export downloads | **Backend** only (HTTP + WebSocket) |
 | **Backend** (`apps/backend`) | Product API: auth, sessions, transcript storage, export jobs; **orchestrates** AI work; **does not** expose raw provider keys to the browser | PostgreSQL, object storage, **AI-API** (mTLS or signed service JWT), optional queue |
 | **AI-API** (`apps/ai-api`) | Model boundary: streaming STT, chat/completions, future embeddings / RAG inference | Upstream LLM/STT (cloud or local OpenAI-compatible servers) |
-| **MCP server** (`apps/mcp-server`) | MCP tools for agents (list sessions, fetch transcript, search—semantic later) | **Backend** internal / read API (single authorization story) |
+| **MCP server** (`apps/mcp-server`) | MCP **data tools** for agents (sessions, transcripts, semantic search later) **plus** bundled **Agent Skills** (`SKILL.md` trees) exposed via MCP tools/resources (e.g. `list_skills`, `get_skill`) | **Backend** internal / read API (single authorization story); skills are read from the MCP bundle on disk |
 
-**Trust boundary**: Browsers and MCP clients **do not** call AI-API directly. The backend decides when to transcribe or summarize, sends job descriptors and server-side credentials to AI-API, persists results, and streams progress to the web app.
+**Trust boundary**: Browsers and MCP clients **do not** call AI-API directly. The backend decides when to transcribe or summarize, sends job descriptors and server-side credentials to AI-API, persists results, and streams progress to the web app. **Skills are non-secret instructional content** for agents (markdown only); API keys and private user data still flow through the backend only.
 
 ### Diagram
 
@@ -49,6 +49,7 @@ flowchart TB
     Backend[Backend_API_WS]
     AIAPI[AI_API]
     MCP[MCP_server]
+    SkillsBundle[skills_SKILL_md_bundle]
   end
   subgraph data [Data]
     PG[(PostgreSQL)]
@@ -61,6 +62,7 @@ flowchart TB
   Backend -->|internal_HTTP| AIAPI
   MCPClient -->|MCP| MCP
   MCP -->|internal_read_API| Backend
+  MCP -->|read_bundle| SkillsBundle
 ```
 
 **Live transcript path**: Web → Backend (WebSocket) → AI-API (chunked HTTP or WebSocket) → Backend persists segments → Backend → Web.
@@ -97,6 +99,23 @@ Provider adapters (**`TranscribeStream`**, **`ChatComplete`**, later **`Embed`**
 
 Ship the MCP server as its own artifact (e.g. Docker image or `npx` / `uv run` entrypoint).
 
+### Agent skills in MCP
+
+The MCP server ships a **bundled skill tree** (Cursor-style: `apps/mcp-server/skills/<skill-name>/SKILL.md` with YAML `name` and `description`, plus optional `reference.md` / scripts). Agents **discover** skills through MCP—recommended v1 tools: **`list_skills`** and **`get_skill`** (by skill id); **resources** (e.g. `ink-echo://skills/{name}`) are optional for hosts that prefer URI-based reads. Skills are **instructions only**; they do not replace backend auth or hold secrets.
+
+**Bundled skills (target catalog)** — retrieval and embeddings remain in **backend + AI-API**; each skill tells the agent *how* to use tool outputs.
+
+| Skill id | One-line purpose |
+|----------|------------------|
+| `meeting-minutes` | Structured minutes from one transcript: topics, decisions, open questions; link claims to timecodes/segment ids when available. |
+| `action-items` | Extract who / what / by when; flag uncertainty; output task-friendly lists. |
+| `summary-and-titles` | Short summary, one-line title, optional sections for UI and search snippets. |
+| `export-prep` | Normalize content for Markdown, plain text, or JSON exports and downstream DOCX/PDF. |
+| `quality-and-consistency` | Optional polish: glossary, name normalization, redaction rules (instructions only—no secrets in the file). |
+| `cross-session-retrieval-answer` | After **RAG** tools (e.g. `semantic_search`, `rag_answer`, transcript chunks): cite sources (session id + chunk/span or quote + timestamp), structure the answer (direct answer first, then cited bullets), hedge or refuse when evidence is weak; do not invent meetings or quotes. |
+
+**`cross-session-retrieval-answer`**: Vector search, reranking, and model calls live in **backend** (orchestration) and **AI-API** (embed / generate). The skill must **not** duplicate retrieval logic—it only standardizes **citation format**, **answer shape**, and **safe hedging** across MCP clients. Until semantic tools ship, this skill may ship as a **stub** or state in its `description` that it applies once `semantic_search` (or equivalent) is available—keep skill text in sync when tool response shapes change.
+
 ---
 
 ## Repository layout (target monorepo)
@@ -105,13 +124,14 @@ Ship the MCP server as its own artifact (e.g. Docker image or `npx` / `uv run` e
 - `apps/backend` — Product API + WebSocket  
 - `apps/ai-api` — STT / LLM / embeddings  
 - `apps/mcp-server` — MCP process  
+- `apps/mcp-server/skills/` — Bundled Agent Skills (`SKILL.md` per skill)  
 - `packages/shared-types` — Shared DTOs / generated types (optional)  
 
 ---
 
 ## Roadmap (phased)
 
-1. **MVP**: Run **web + backend + ai-api + mcp-server** locally (e.g. Compose); sessions and transcripts on the backend; web capture or upload; STT/LLM via AI-API; minimal MCP read tools; export MD / TXT / JSON.
+1. **MVP**: Run **web + backend + ai-api + mcp-server** locally (e.g. Compose); sessions and transcripts on the backend; web capture or upload; STT/LLM via AI-API; minimal MCP data tools **and** `list_skills` / `get_skill` over the bundled skill tree; export MD / TXT / JSON.
 2. **Sync**: Real auth, multi-device session list, provider secrets only on the backend.
 3. **Exports**: DOCX / PDF async on the backend.
 4. **RAG**: Vectors in Postgres; semantic MCP tools.

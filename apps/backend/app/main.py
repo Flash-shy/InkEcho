@@ -7,6 +7,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.config import settings
 from app.db import SessionLocal, init_db
 from app.models import Session as SessionModel
+from app.routers import platform as platform_router
+from app.routers import rag as rag_router
 from app.routers import sessions as sessions_router
 from app.ws_hub import SessionWsHub
 
@@ -30,6 +32,8 @@ app.add_middleware(
 )
 
 app.include_router(sessions_router.router)
+app.include_router(platform_router.router)
+app.include_router(rag_router.router)
 
 
 @app.get("/health")

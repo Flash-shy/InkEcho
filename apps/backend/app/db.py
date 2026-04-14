@@ -1,7 +1,7 @@
 from collections.abc import AsyncGenerator
 from pathlib import Path
 
-from sqlalchemy import event
+from sqlalchemy import event, inspect, text
 from sqlalchemy.engine.url import make_url
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
@@ -46,7 +46,24 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
         yield session
 
 
+def _migrate_sessions_summary_columns(sync_conn) -> None:
+    insp = inspect(sync_conn)
+    if "sessions" not in insp.get_table_names():
+        return
+    cols = {c["name"] for c in insp.get_columns("sessions")}
+    alters: list[str] = []
+    if "summary_text" not in cols:
+        alters.append("ALTER TABLE sessions ADD COLUMN summary_text TEXT")
+    if "summary_error" not in cols:
+        alters.append("ALTER TABLE sessions ADD COLUMN summary_error TEXT")
+    if "summary_status" not in cols:
+        alters.append("ALTER TABLE sessions ADD COLUMN summary_status VARCHAR(32) DEFAULT 'idle'")
+    for stmt in alters:
+        sync_conn.execute(text(stmt))
+
+
 async def init_db() -> None:
     _ensure_sqlite_parent_dir(settings.database_url_async)
     async with _engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        await conn.run_sync(_migrate_sessions_summary_columns)

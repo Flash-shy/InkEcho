@@ -34,6 +34,7 @@ export async function listSkills(skillsRoot: string): Promise<SkillSummary[]> {
   for (const e of entries) {
     if (!e.isDirectory()) continue;
     const id = e.name;
+    if (id.startsWith(".") || id.startsWith("_")) continue;
     const skillPath = path.join(skillsRoot, id, "SKILL.md");
     let raw: string;
     try {
@@ -52,6 +53,7 @@ export async function listSkills(skillsRoot: string): Promise<SkillSummary[]> {
 }
 
 export async function getSkill(skillsRoot: string, skillId: string): Promise<SkillDetail | null> {
+  if (skillId.startsWith(".") || skillId.startsWith("_")) return null;
   const skillPath = path.join(skillsRoot, skillId, "SKILL.md");
   let raw: string;
   try {

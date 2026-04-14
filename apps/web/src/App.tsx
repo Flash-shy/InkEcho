@@ -1,49 +1,100 @@
-import { useEffect, useId, useState } from "react";
+import { useCallback, useEffect, useId, useState } from "react";
 import { type CaptureKind } from "./captureTypes";
 import { ListenPanel } from "./ListenPanel";
+import { PlatformStatusMenu } from "./PlatformStatusMenu";
+import type { SessionSummaryState } from "./sessionSummary";
+import { SessionsPanel } from "./SessionsPanel";
+import {
+  applyThemeToDocument,
+  getStoredThemePreference,
+  resolveTheme,
+  setStoredThemePreference,
+  type ThemePreference,
+} from "./theme";
+import { RagPanel } from "./RagPanel";
 import { TranscribePanel, type TranscribeClip } from "./TranscribePanel";
 
-type Health = { status: string; service?: string; ai_api_base_url?: string };
-type MainTab = "listen" | "transcribe" | "summarize";
+type MainTab = "listen" | "transcribe" | "sessions" | "rag";
 
 export default function App() {
   const tabIds = useId();
   const listenPanelId = `${tabIds}-panel-listen`;
   const transcribePanelId = `${tabIds}-panel-transcribe`;
-  const summarizePanelId = `${tabIds}-panel-summarize`;
+  const sessionsPanelId = `${tabIds}-panel-sessions`;
+  const ragPanelId = `${tabIds}-panel-rag`;
 
   const [mainTab, setMainTab] = useState<MainTab>("listen");
-  const [health, setHealth] = useState<Health | null>(null);
   const [healthError, setHealthError] = useState<string | null>(null);
   const [healthLoading, setHealthLoading] = useState(true);
   const [transcribeQueue, setTranscribeQueue] = useState<TranscribeClip[]>([]);
+  const [sessionSummaries, setSessionSummaries] = useState<Record<string, SessionSummaryState>>({});
+  const [themePref, setThemePref] = useState<ThemePreference>(() => getStoredThemePreference());
+
+  const mergeSessionSummary = useCallback((sessionId: string, patch: Partial<SessionSummaryState>) => {
+    setSessionSummaries((prev) => {
+      const base = prev[sessionId] ?? { summary_status: "idle" };
+      return { ...prev, [sessionId]: { ...base, ...patch } };
+    });
+  }, []);
 
   useEffect(() => {
-    if (!import.meta.env.DEV) return;
     fetch("/api/health")
       .then((r) => {
         if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
         return r.json();
       })
-      .then((data: Health) => {
-        setHealth(data);
+      .then(() => {
         setHealthError(null);
       })
       .catch((e: Error) => {
         setHealthError(e.message);
-        setHealth(null);
       })
       .finally(() => setHealthLoading(false));
   }, []);
 
+  useEffect(() => {
+    applyThemeToDocument(resolveTheme(themePref));
+  }, [themePref]);
+
+  useEffect(() => {
+    if (themePref !== "auto") return;
+    const t = window.setInterval(() => {
+      applyThemeToDocument(resolveTheme("auto"));
+    }, 60_000);
+    return () => window.clearInterval(t);
+  }, [themePref]);
+
+  const onThemeChange = (next: ThemePreference) => {
+    setThemePref(next);
+    setStoredThemePreference(next);
+    applyThemeToDocument(resolveTheme(next));
+  };
+
   return (
     <>
       <header className="hero">
-        <h1>InkEcho</h1>
-        <p className="tagline">
-          Capture what you hear, transcribe it, and turn it into summaries you can export—starting as a web-first
-          stack.
-        </p>
+        <div className="hero-top">
+          <div className="hero-brand">
+            <h1>InkEcho</h1>
+            <p className="tagline">Capture · Transcribe · Summarize · Ask</p>
+          </div>
+          <div className="hero-controls">
+            <label className="theme-control">
+              <span className="visually-hidden">Theme</span>
+              <select
+                className="theme-select"
+                value={themePref}
+                onChange={(e) => onThemeChange(e.target.value as ThemePreference)}
+                aria-label="Theme: Auto follows Asia/Shanghai 06:00–18:00 light, else dark"
+              >
+                <option value="auto">Auto (Shanghai)</option>
+                <option value="light">Light</option>
+                <option value="dark">Dark</option>
+              </select>
+            </label>
+            <PlatformStatusMenu apiUnreachable={!healthLoading && !!healthError} />
+          </div>
+        </div>
         <div className="tablist" role="tablist" aria-label="Main workflow">
           <button
             type="button"
@@ -72,14 +123,26 @@ export default function App() {
           <button
             type="button"
             role="tab"
-            id={`${tabIds}-tab-summarize`}
-            aria-selected={mainTab === "summarize"}
-            aria-controls={summarizePanelId}
-            tabIndex={mainTab === "summarize" ? 0 : -1}
-            className={`tab-pill ${mainTab === "summarize" ? "tab-pill-active" : ""}`}
-            onClick={() => setMainTab("summarize")}
+            id={`${tabIds}-tab-sessions`}
+            aria-selected={mainTab === "sessions"}
+            aria-controls={sessionsPanelId}
+            tabIndex={mainTab === "sessions" ? 0 : -1}
+            className={`tab-pill ${mainTab === "sessions" ? "tab-pill-active" : ""}`}
+            onClick={() => setMainTab("sessions")}
           >
-            Summarize
+            Sessions
+          </button>
+          <button
+            type="button"
+            role="tab"
+            id={`${tabIds}-tab-rag`}
+            aria-selected={mainTab === "rag"}
+            aria-controls={ragPanelId}
+            tabIndex={mainTab === "rag" ? 0 : -1}
+            className={`tab-pill ${mainTab === "rag" ? "tab-pill-active" : ""}`}
+            onClick={() => setMainTab("rag")}
+          >
+            Ask
           </button>
         </div>
       </header>
@@ -114,63 +177,39 @@ export default function App() {
             clips={transcribeQueue}
             onRemoveClip={(id) => setTranscribeQueue((q) => q.filter((c) => c.id !== id))}
             onClearQueue={() => setTranscribeQueue([])}
+            sessionSummaries={sessionSummaries}
+            mergeSessionSummary={mergeSessionSummary}
           />
         </div>
         <div
-          id={summarizePanelId}
+          id={sessionsPanelId}
           role="tabpanel"
-          aria-labelledby={`${tabIds}-tab-summarize`}
-          hidden={mainTab !== "summarize"}
+          aria-labelledby={`${tabIds}-tab-sessions`}
+          hidden={mainTab !== "sessions"}
         >
-          <h2 className="workflow-title">Summarize</h2>
-          <p className="muted workflow-copy">
-            Once transcripts exist, the backend will orchestrate summary jobs (minutes, actions, recap) via the AI-API
-            using server-side credentials. Export to Markdown, plain text, and JSON is planned for the MVP slice after
-            STT.
-          </p>
-          <ul className="workflow-list muted">
-            <li>No transcript yet—complete capture + STT integration first.</li>
-            <li>Prompt templates and provider choice stay on the backend for a single trust boundary.</li>
-          </ul>
+          <h2 className="workflow-title">Sessions</h2>
+          <SessionsPanel
+            active={mainTab === "sessions"}
+            sessionSummaries={sessionSummaries}
+            mergeSessionSummary={mergeSessionSummary}
+          />
+        </div>
+        <div
+          id={ragPanelId}
+          role="tabpanel"
+          aria-labelledby={`${tabIds}-tab-rag`}
+          hidden={mainTab !== "rag"}
+        >
+          <h2 className="workflow-title">Ask across sessions</h2>
+          <RagPanel active={mainTab === "rag"} />
         </div>
       </section>
 
-      {import.meta.env.DEV && (
-        <>
-          <details className="details-platform">
-            <summary>Platform status</summary>
-            {healthLoading && (
-              <div className="status-loading">
-                <span className="spinner" aria-hidden />
-                <span>
-                  Contacting backend via <code>/api</code> proxy…
-                </span>
-              </div>
-            )}
-            {!healthLoading && healthError && (
-              <div className="status-err" role="alert">
-                <strong>Backend unreachable.</strong> Start it from <code>apps/backend</code> (see README), then refresh.
-                <div className="muted" style={{ marginTop: "0.5rem" }}>
-                  Detail: {healthError}
-                </div>
-              </div>
-            )}
-            {!healthLoading && health && (
-              <div className="status-ok">
-                <span className="status-dot" aria-hidden />
-                <div>
-                  <div style={{ fontWeight: 600, marginBottom: "0.35rem" }}>Backend is up</div>
-                  <pre className="pre-json">{JSON.stringify(health, null, 2)}</pre>
-                </div>
-              </div>
-            )}
-          </details>
-
-          <footer className="foot">
-            Dev tip: <code>npm run dev:web</code> with backend on port <code>8000</code> — Vite proxies{" "}
-            <code>/api</code> → <code>http://127.0.0.1:8000</code>.
-          </footer>
-        </>
+      {!healthLoading && healthError && (
+        <div className="connect-banner" role="alert">
+          <span className="connect-banner-title">API unreachable</span>
+          <span className="connect-banner-detail">{healthError}</span>
+        </div>
       )}
     </>
   );

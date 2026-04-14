@@ -52,7 +52,7 @@ if [[ "$DO_DOCKER" == true ]]; then
 fi
 
 if [[ "$CLEAN_PORTS" == true ]]; then
-  echo "Freeing dev ports 8000 / 8001 / 5173 (avoid 'Address already in use')…"
+  echo "Freeing dev ports 8000 / 8001 / 5173 / 3033 (avoid 'Address already in use')…"
   bash "$ROOT/scripts/stop-all.sh"
   echo ""
 fi
@@ -94,9 +94,9 @@ echo "  Backend   http://127.0.0.1:8000/health"
 echo "  AI-API    http://127.0.0.1:8001/health"
 echo "  Web       http://127.0.0.1:5173/"
 echo ""
-echo "MCP server (stdio, 4th process): not started here."
-echo "  Cursor / MCP client command:"
-echo "    node $ROOT/apps/mcp-server/dist/index.js"
+echo "MCP server (stdio + optional HTTP health): not started here."
+echo "  Cursor / MCP client (health on :3033 by default for /health/platform):"
+echo "    INK_ECHO_MCP_HEALTH_PORT=3033 node $ROOT/apps/mcp-server/dist/index.js"
 echo "  Or watch mode in another terminal:"
 echo "    cd $ROOT && npm run dev:mcp"
 echo ""

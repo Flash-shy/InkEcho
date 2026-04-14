@@ -1,6 +1,8 @@
+from typing import Literal
 from uuid import UUID
 
-from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Request, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Query, Request, UploadFile
+from fastapi.responses import Response
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -8,7 +10,16 @@ from sqlalchemy.orm import selectinload
 from app.config import settings
 from app.db import get_db
 from app.models import Session as SessionModel
+from app.models import SessionStatus
 from app.schemas import AudioAccepted, SessionCreate, SessionOut, SessionSummary
+from app.services.export_session import (
+    build_export_payload,
+    export_as_json,
+    export_as_md,
+    export_as_txt,
+    export_filename,
+)
+from app.services.summary import run_summary_job
 from app.services.transcription import run_transcription_job
 
 router = APIRouter(prefix="/sessions", tags=["sessions"])
@@ -76,3 +87,64 @@ async def upload_audio(
         hub,
     )
     return AudioAccepted(session_id=session_id)
+
+
+@router.post("/{session_id}/summarize", response_model=SessionOut)
+async def start_summarize(
+    request: Request,
+    session_id: UUID,
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db),
+):
+    q = await db.execute(
+        select(SessionModel)
+        .options(selectinload(SessionModel.segments))
+        .where(SessionModel.id == session_id)
+    )
+    row = q.scalar_one_or_none()
+    if not row:
+        raise HTTPException(status_code=404, detail="Session not found")
+    if row.status != SessionStatus.ready.value:
+        raise HTTPException(
+            status_code=400,
+            detail="Session must be transcribed (status=ready) before summarizing",
+        )
+    if not row.segments:
+        raise HTTPException(status_code=400, detail="No transcript segments to summarize")
+    if row.summary_status == "running":
+        raise HTTPException(status_code=409, detail="Summary already in progress")
+    row.summary_status = "running"
+    row.summary_error = None
+    await db.commit()
+    await db.refresh(row)
+    hub = request.app.state.ws_hub
+    background_tasks.add_task(run_summary_job, session_id, hub)
+    return row
+
+
+@router.get("/{session_id}/export")
+async def export_session(
+    session_id: UUID,
+    export_format: Literal["md", "txt", "json"] = Query("json", alias="format"),
+):
+    payload = await build_export_payload(session_id)
+    if not payload:
+        raise HTTPException(status_code=404, detail="Session not found")
+    if export_format == "json":
+        body = export_as_json(payload)
+        media = "application/json; charset=utf-8"
+        ext = "json"
+    elif export_format == "txt":
+        body = export_as_txt(payload)
+        media = "text/plain; charset=utf-8"
+        ext = "txt"
+    else:
+        body = export_as_md(payload)
+        media = "text/markdown; charset=utf-8"
+        ext = "md"
+    fname = export_filename(session_id, ext)
+    return Response(
+        content=body,
+        media_type=media,
+        headers={"Content-Disposition": f'attachment; filename="{fname}"'},
+    )

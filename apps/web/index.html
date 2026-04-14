@@ -3,7 +3,35 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="dark light" />
     <title>InkEcho</title>
+    <script>
+      (function () {
+        try {
+          var k = "inkecho-theme";
+          var p = localStorage.getItem(k) || "auto";
+          var hour = parseInt(
+            new Intl.DateTimeFormat("en-GB", {
+              timeZone: "Asia/Shanghai",
+              hour: "numeric",
+              hour12: false,
+            })
+              .formatToParts(new Date())
+              .find(function (x) {
+                return x.type === "hour";
+              }).value,
+            10,
+          );
+          var auto = hour >= 18 || hour < 6 ? "dark" : "light";
+          var resolved = p === "auto" ? auto : p;
+          document.documentElement.dataset.theme = resolved;
+          document.documentElement.style.colorScheme = resolved;
+        } catch (e) {
+          document.documentElement.dataset.theme = "dark";
+          document.documentElement.style.colorScheme = "dark";
+        }
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

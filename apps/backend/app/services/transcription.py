@@ -1,3 +1,5 @@
+import asyncio
+import logging
 import uuid
 from typing import Any
 
@@ -9,6 +11,8 @@ from app.db import SessionLocal
 from app.models import Session as InkSession
 from app.models import SessionStatus, TranscriptSegment
 from app.ws_hub import SessionWsHub
+
+logger = logging.getLogger(__name__)
 
 
 async def call_ai_transcribe(data: bytes, filename: str, content_type: str | None) -> dict[str, Any]:
@@ -110,3 +114,16 @@ async def run_transcription_job(
         )
 
     await hub.broadcast(str(session_id), {"type": "transcribe_done", "session_id": str(session_id)})
+
+    async def _index_rag() -> None:
+        try:
+            from app.services.rag_index import index_session_for_rag
+
+            await index_session_for_rag(session_id)
+        except Exception:
+            logger.exception("RAG index failed for session %s", session_id)
+
+    try:
+        asyncio.create_task(_index_rag())
+    except Exception:
+        logger.exception("Could not schedule RAG index for session %s", session_id)

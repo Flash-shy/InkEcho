@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# Stop InkEcho dev processes: listeners on backend 8000, ai-api 8001, web 5173.
+# Stop InkEcho dev processes: listeners on backend 8000, ai-api 8001, web 5173, MCP health 3033.
 # Also kills PIDs recorded by ./scripts/dev-all.sh in logs/dev-all.pids (if present).
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 LOG_DIR="$ROOT/logs"
 PID_FILE="$LOG_DIR/dev-all.pids"
-PORTS=(8000 8001 5173)
+PORTS=(8000 8001 5173 3033)
 
 FORCE=false
 for arg in "$@"; do
@@ -16,7 +16,7 @@ for arg in "$@"; do
       ;;
     -h | --help)
       echo "Usage: $0 [--force]"
-      echo "  Stops TCP listeners on ports 8000 (backend), 8001 (ai-api), 5173 (Vite)."
+      echo "  Stops TCP listeners on ports 8000 (backend), 8001 (ai-api), 5173 (Vite), 3033 (MCP health)."
       echo "  Also sends SIGTERM to PIDs listed in $PID_FILE from dev-all.sh."
       echo "  --force  send SIGKILL if something is still listening after ~1s."
       echo ""
@@ -87,4 +87,4 @@ fi
 
 rm -f "$PID_FILE"
 
-echo "Done. Verify with: lsof -nP -iTCP:8000 -sTCP:LISTEN && lsof -nP -iTCP:8001 -sTCP:LISTEN && lsof -nP -iTCP:5173 -sTCP:LISTEN"
+echo "Done. Verify with: lsof -nP -iTCP:8000 -sTCP:LISTEN && lsof -nP -iTCP:8001 -sTCP:LISTEN && lsof -nP -iTCP:5173 -sTCP:LISTEN && lsof -nP -iTCP:3033 -sTCP:LISTEN"

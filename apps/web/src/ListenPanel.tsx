@@ -288,7 +288,7 @@ export function ListenPanel({ onClipReady }: ListenPanelProps) {
       const displayStream = await navigator.mediaDevices.getDisplayMedia({
         video: true,
         audio: true,
-      } as DisplayMediaStreamConstraints);
+      });
 
       let recordStream: MediaStream;
       let label: string;
@@ -422,11 +422,8 @@ export function ListenPanel({ onClipReady }: ListenPanelProps) {
   return (
     <div className="listen">
       <p className="listen-lead muted">
-        Browsers cannot tap system audio directly. Share a <strong>tab</strong> or <strong>window</strong> (enable “share
-        audio” when prompted), optionally <strong>mix in your microphone</strong> below, or use{" "}
-        <strong>microphone only</strong> / <strong>upload</strong>. Starting another capture automatically{" "}
-        <strong>saves the current clip to the transcription queue</strong> so you can record tab first, then mic, etc.
-        Use <strong>Add to transcription queue</strong> to jump to Transcribe after adding.
+        Tab or screen capture (enable tab audio), mic only, or file upload. A new capture queues the previous clip
+        automatically.
       </p>
 
       {queueNotice && (
@@ -515,7 +512,7 @@ export function ListenPanel({ onClipReady }: ListenPanelProps) {
 
       <div className="upload-block">
         <h3 className="listen-subh">Upload a recording</h3>
-        <p className="muted upload-hint">Hold Ctrl/Cmd or Shift to select multiple files.</p>
+        <p className="muted upload-hint">Multi-select supported.</p>
         <label className="file-label">
           <input type="file" accept={uploadAccept} multiple onChange={onUploadPick} className="file-input" />
           <span className="btn btn-ghost">Choose audio or video file(s)</span>

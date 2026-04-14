@@ -1,16 +1,12 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 
 import { type CaptureKind, captureKindMeta } from "./captureTypes";
+import { formatSegmentMeta, type TranscriptSegmentRow } from "./transcriptFormat";
+import type { SessionSummaryState } from "./sessionSummary";
 
 export type TranscribeClip = { id: string; blob: Blob; label: string; captureKind: CaptureKind };
 
-type WsSegment = {
-  id: string;
-  seq: number;
-  text: string;
-  start_ms: number | null;
-  end_ms: number | null;
-};
+type WsSegment = TranscriptSegmentRow;
 
 function extFromBlob(blob: Blob): string {
   const t = blob.type;
@@ -20,25 +16,6 @@ function extFromBlob(blob: Blob): string {
   if (t.includes("mpeg") || t.includes("mp3")) return "mp3";
   if (t.includes("ogg")) return "ogg";
   return "bin";
-}
-
-function formatMs(ms: number | null): string {
-  if (ms == null) return "—";
-  const s = ms / 1000;
-  const m = Math.floor(s / 60);
-  const r = Math.floor(s % 60);
-  return m > 0 ? `${m}:${r.toString().padStart(2, "0")}` : `${r}s`;
-}
-
-function formatSegmentMeta(s: WsSegment, segments: WsSegment[]): string {
-  const hasRange = s.start_ms != null || s.end_ms != null;
-  if (hasRange) {
-    return `Segment ${s.seq + 1} · ${formatMs(s.start_ms)}–${formatMs(s.end_ms)}`;
-  }
-  if (segments.length > 1) {
-    return `Segment ${s.seq + 1} of ${segments.length} · no timestamps`;
-  }
-  return "Full clip · no timestamps from this STT provider";
 }
 
 function formatSize(bytes: number): string {
@@ -56,13 +33,27 @@ type CompletedTranscript = {
   segments: WsSegment[];
 };
 
+type ApiSession = {
+  summary_status?: string;
+  summary_text?: string | null;
+  summary_error?: string | null;
+};
+
 type Props = {
   clips: TranscribeClip[];
   onRemoveClip: (id: string) => void;
   onClearQueue: () => void;
+  sessionSummaries: Record<string, SessionSummaryState>;
+  mergeSessionSummary: (sessionId: string, patch: Partial<SessionSummaryState>) => void;
 };
 
-export function TranscribePanel({ clips, onRemoveClip, onClearQueue }: Props) {
+export function TranscribePanel({
+  clips,
+  onRemoveClip,
+  onClearQueue,
+  sessionSummaries,
+  mergeSessionSummary,
+}: Props) {
   const [phase, setPhase] = useState<"idle" | "running" | "done" | "error">("idle");
   const [statusLine, setStatusLine] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -123,6 +114,153 @@ export function TranscribePanel({ clips, onRemoveClip, onClearQueue }: Props) {
     setResultLabel(null);
     setRunningClipId(null);
   }, [clips.length, teardownWs]);
+
+  const keysSig = completedTranscripts.map((t) => t.key).join(",");
+
+  useEffect(() => {
+    if (!keysSig) return;
+    const keys = keysSig.split(",");
+    let cancelled = false;
+    void (async () => {
+      const pairs = await Promise.all(
+        keys.map(async (k) => {
+          try {
+            const r = await fetch(`/api/sessions/${k}`);
+            if (!r.ok) return null;
+            const s = (await r.json()) as ApiSession;
+            return [
+              k,
+              {
+                summary_status: s.summary_status ?? "idle",
+                summary_text: s.summary_text,
+                summary_error: s.summary_error,
+              },
+            ] as const;
+          } catch {
+            return null;
+          }
+        }),
+      );
+      if (cancelled) return;
+      for (const p of pairs) {
+        if (!p) continue;
+        const [k, st] = p;
+        mergeSessionSummary(k, st);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [keysSig, mergeSessionSummary]);
+
+  const pollSummaryUntilDone = useCallback((sessionKey: string) => {
+    const started = Date.now();
+    const tick = async () => {
+      if (Date.now() - started > 120_000) {
+        mergeSessionSummary(sessionKey, {
+          summary_status: "error",
+          summary_error: "Summary timed out — check backend and AI-API logs.",
+        });
+        return;
+      }
+      try {
+        const r = await fetch(`/api/sessions/${sessionKey}`);
+        if (!r.ok) {
+          window.setTimeout(tick, 450);
+          return;
+        }
+        const s = (await r.json()) as ApiSession;
+        const st = s.summary_status ?? "idle";
+        mergeSessionSummary(sessionKey, {
+          summary_status: st,
+          summary_text: s.summary_text,
+          summary_error: s.summary_error,
+        });
+        if (st === "ready" || st === "error") return;
+      } catch {
+        /* continue polling */
+      }
+      window.setTimeout(tick, 450);
+    };
+    void tick();
+  }, [mergeSessionSummary]);
+
+  const onSummarize = useCallback(
+    async (sessionKey: string) => {
+      try {
+        const gr = await fetch(`/api/sessions/${sessionKey}`);
+        if (gr.ok) {
+          const s = (await gr.json()) as ApiSession & {
+            summary_status?: string;
+            summary_text?: string | null;
+            summary_error?: string | null;
+          };
+          if (s.summary_status === "ready" && s.summary_text?.trim()) {
+            mergeSessionSummary(sessionKey, {
+              summary_status: "ready",
+              summary_text: s.summary_text,
+              summary_error: s.summary_error,
+            });
+            requestAnimationFrame(() => {
+              const el = document.getElementById(`summary-transcribe-${sessionKey}`);
+              if (el) {
+                el.scrollIntoView({ behavior: "smooth", block: "start", inline: "nearest" });
+                el.classList.add("transcript-block-targeted");
+                window.setTimeout(() => el.classList.remove("transcript-block-targeted"), 1800);
+              }
+            });
+            return;
+          }
+        }
+      } catch {
+        /* fall through to POST */
+      }
+
+      mergeSessionSummary(sessionKey, {
+        summary_status: "running",
+        summary_error: undefined,
+      });
+      try {
+        const r = await fetch(`/api/sessions/${sessionKey}/summarize`, { method: "POST" });
+        if (!r.ok) {
+          const msg = await r.text();
+          mergeSessionSummary(sessionKey, {
+            summary_status: "error",
+            summary_error: `${r.status} ${msg}`,
+          });
+          return;
+        }
+        pollSummaryUntilDone(sessionKey);
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : "Summarize request failed";
+        mergeSessionSummary(sessionKey, { summary_status: "error", summary_error: msg });
+      }
+    },
+    [pollSummaryUntilDone, mergeSessionSummary],
+  );
+
+  const onExport = useCallback(async (sessionKey: string, format: "md" | "txt" | "json") => {
+    try {
+      const r = await fetch(`/api/sessions/${sessionKey}/export?format=${format}`);
+      if (!r.ok) {
+        window.alert(`${r.status} ${await r.text()}`);
+        return;
+      }
+      const blob = await r.blob();
+      const cd = r.headers.get("Content-Disposition");
+      let name = `inkecho-${sessionKey}.${format}`;
+      const m = cd?.match(/filename="([^"]+)"/);
+      if (m?.[1]) name = m[1];
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = name;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      window.alert(e instanceof Error ? e.message : "Export failed");
+    }
+  }, []);
 
   const onTranscribe = useCallback(
     async (clip: TranscribeClip) => {
@@ -262,6 +400,23 @@ export function TranscribePanel({ clips, onRemoveClip, onClearQueue }: Props) {
     requestAnimationFrame(() => requestAnimationFrame(run));
   }, []);
 
+  const scrollToSummaryBlock = useCallback(
+    (sessionKey: string) => {
+      const run = () => {
+        const el = document.getElementById(`summary-transcribe-${sessionKey}`);
+        if (el) {
+          el.scrollIntoView({ behavior: "smooth", block: "start", inline: "nearest" });
+          el.classList.add("transcript-block-targeted");
+          window.setTimeout(() => el.classList.remove("transcript-block-targeted"), 1800);
+        } else {
+          scrollToTranscriptBlock(sessionKey);
+        }
+      };
+      requestAnimationFrame(() => requestAnimationFrame(run));
+    },
+    [scrollToTranscriptBlock],
+  );
+
   const onClipPrimaryAction = useCallback(
     (clip: TranscribeClip) => {
       const done = completedTranscripts.find((p) => p.clipId === clip.id && p.segments.length > 0);
@@ -290,20 +445,8 @@ export function TranscribePanel({ clips, onRemoveClip, onClearQueue }: Props) {
 
   return (
     <div className="transcribe">
-      <p className="muted workflow-copy">
-        Open a <strong>WebSocket</strong> first, then upload the clip to the backend. The backend calls the{" "}
-        <strong>AI-API</strong> and streams segment events as they are stored. Use mock mode when{" "}
-        <code>OPENAI_API_KEY</code> is unset on AI-API. Add several clips from <strong>Listen</strong> (including
-        multi-file upload). Each row is one session. After a clip has been transcribed, the same button becomes{" "}
-        <strong>View transcript</strong> and only scrolls to the result — no second API call. To run STT again, remove
-        the clip and add it again from Listen (new queue row).
-      </p>
-
       {clips.length === 0 && (
-        <p className="muted workflow-copy">
-          Queue is empty. In <strong>Listen</strong>, record, share, or upload one or more files and use{" "}
-          <strong>Add to transcription queue</strong>.
-        </p>
+        <p className="muted panel-lead">Add clips from Listen, then run speech-to-text per row.</p>
       )}
 
       {clips.length > 0 && (
@@ -391,37 +534,97 @@ export function TranscribePanel({ clips, onRemoveClip, onClearQueue }: Props) {
         )}
 
         {showTimingExplainer && (
-          <p className="muted transcribe-timing-note">
-            Timestamps (e.g. 0:05–0:12) appear when the STT API returns timed segments. OpenRouter chat models usually
-            return one block of text with no per-second timing. For word/segment times, use{" "}
-            <strong>STT_PROVIDER=openai</strong> with an <strong>OpenAI API key</strong> (Whisper{" "}
-            <code>verbose_json</code>).
-          </p>
+          <details className="help-details">
+            <summary>Timestamps</summary>
+            <p className="help-details-body">
+              Segment times appear when the STT provider returns them. For per-word timing, use OpenAI Whisper (
+              <code>verbose_json</code>) on the AI-API.
+            </p>
+          </details>
         )}
 
-        {visibleCompletedTranscripts.map((run) => (
-          <section key={run.key} id={`transcript-block-${run.key}`} className="transcript-block">
-            <p className="muted transcribe-meta">
-              Session <code>{run.key}</code>
-              {" · "}
-              <span className="clip-queue-name">{run.clipLabel}</span>
-            </p>
-            <h3 className="transcribe-result-h" id={`transcript-${run.key}`}>
-              Transcript · {run.clipLabel}
-            </h3>
-            <ol className="segment-list" aria-labelledby={`transcript-${run.key}`}>
-              {run.segments.map((s) => {
-                const metaLine = formatSegmentMeta(s, run.segments);
-                return (
-                  <li key={s.id} className="segment-item">
-                    <div className="segment-meta muted">{metaLine}</div>
-                    <div className="segment-text">{s.text}</div>
-                  </li>
-                );
-              })}
-            </ol>
-          </section>
-        ))}
+        {visibleCompletedTranscripts.map((run) => {
+          const sum = sessionSummaries[run.key];
+          const sumStatus = sum?.summary_status ?? "idle";
+          const summarizing = sumStatus === "running";
+          const hasSummary = sumStatus === "ready" && Boolean(sum?.summary_text?.trim());
+          return (
+            <section key={run.key} id={`transcript-block-${run.key}`} className="transcript-block">
+              <p className="muted transcribe-meta">
+                Session <code>{run.key}</code>
+                {" · "}
+                <span className="clip-queue-name">{run.clipLabel}</span>
+              </p>
+              <div className="transcript-actions">
+                <button
+                  type="button"
+                  className={`btn btn-small ${hasSummary ? "btn-secondary" : "btn-primary"}`}
+                  disabled={summarizing}
+                  title={
+                    hasSummary
+                      ? "Scroll to summary below (no API call)."
+                      : "Generate summary once via backend + AI-API."
+                  }
+                  onClick={() => {
+                    if (hasSummary) scrollToSummaryBlock(run.key);
+                    else void onSummarize(run.key);
+                  }}
+                >
+                  {summarizing ? "Summarizing…" : hasSummary ? "View summary" : "Summarize"}
+                </button>
+                               <button
+                  type="button"
+                  className="btn btn-small"
+                  disabled={summarizing}
+                  onClick={() => void onExport(run.key, "md")}
+                >
+                  Export .md
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-small"
+                  disabled={summarizing}
+                  onClick={() => void onExport(run.key, "txt")}
+                >
+                  Export .txt
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-small"
+                  disabled={summarizing}
+                  onClick={() => void onExport(run.key, "json")}
+                >
+                  Export .json
+                </button>
+              </div>
+              {sum?.summary_error && (
+                <div className="banner-err" role="alert">
+                  {sum.summary_error}
+                </div>
+              )}
+              {sum?.summary_text && sumStatus === "ready" && (
+                <div className="summary-block" id={`summary-transcribe-${run.key}`}>
+                  <h4 className="summary-h">Summary</h4>
+                  <pre className="summary-pre">{sum.summary_text}</pre>
+                </div>
+              )}
+              <h3 className="transcribe-result-h" id={`transcript-${run.key}`}>
+                Transcript · {run.clipLabel}
+              </h3>
+              <ol className="segment-list" aria-labelledby={`transcript-${run.key}`}>
+                {run.segments.map((s) => {
+                  const metaLine = formatSegmentMeta(s, run.segments);
+                  return (
+                    <li key={s.id} className="segment-item">
+                      <div className="segment-meta muted">{metaLine}</div>
+                      <div className="segment-text">{s.text}</div>
+                    </li>
+                  );
+                })}
+              </ol>
+            </section>
+          );
+        })}
 
         {sessionId && (phase === "running" || phase === "error") && resultLabel && (
           <p className="muted transcribe-meta">

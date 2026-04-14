@@ -93,9 +93,8 @@ Provider adapters (**`TranscribeStream`**, **`ChatComplete`**, later **`Embed`**
 
 ## MCP and RAG
 
-- **MCP v1** (examples): `list_sessions`, `get_transcript`, `get_summary`—implemented against backend internal routes, not direct database access from the MCP process.
-- **Later**: `semantic_search` / `rag_answer` via backend + AI-API (embed + retrieve); MCP tool names stay stable while implementations evolve.
-- **RAG**: embeddings and vector storage (e.g. pgvector); ingestion triggered after transcript finalization; heavy work in AI-API or a queue worker.
+- **MCP data tools**: `list_sessions`, `get_transcript`, `get_summary` call the backend HTTP API.
+- **Cross-session RAG**: `semantic_search` and `rag_answer` call **`POST /rag/search`** and **`POST /rag/answer`** on the backend. Transcript chunks are embedded via **AI-API `POST /v1/embeddings`** (OpenAI- or OpenRouter-compatible, or deterministic **mock** vectors when no keys). For **OpenRouter**, prefer a non-`openai/*` embedding model (default **`intfloat/e5-base-v2`**)—`openai/text-embedding-3-small` via OpenRouter often returns **403 ToS**. After changing `OPENROUTER_EMBED_MODEL` or `EMBED_PROVIDER`, **re-index** sessions. Chunks are stored on the backend (JSON vectors in SQLite/Postgres today; **pgvector** remains an optional upgrade for very large corpora). **Indexing** runs automatically after transcription completes; you can rebuild with **`POST /rag/index/{session_id}`** or the Ask tab.
 
 Ship the MCP server as its own artifact (e.g. Docker image or `npx` / `uv run` entrypoint).
 
@@ -114,7 +113,7 @@ The MCP server ships a **bundled skill tree** (Cursor-style: `apps/mcp-server/sk
 | `quality-and-consistency` | Optional polish: glossary, name normalization, redaction rules (instructions only—no secrets in the file). |
 | `cross-session-retrieval-answer` | After **RAG** tools (e.g. `semantic_search`, `rag_answer`, transcript chunks): cite sources (session id + chunk/span or quote + timestamp), structure the answer (direct answer first, then cited bullets), hedge or refuse when evidence is weak; do not invent meetings or quotes. |
 
-**`cross-session-retrieval-answer`**: Vector search, reranking, and model calls live in **backend** (orchestration) and **AI-API** (embed / generate). The skill must **not** duplicate retrieval logic—it only standardizes **citation format**, **answer shape**, and **safe hedging** across MCP clients. Until semantic tools ship, this skill may ship as a **stub** or state in its `description` that it applies once `semantic_search` (or equivalent) is available—keep skill text in sync when tool response shapes change.
+**`cross-session-retrieval-answer`**: Vector search and generation are implemented in **backend** (`semantic_search` / `rag_answer` MCP tools → `/rag/*`) and **AI-API** (`/v1/embeddings`, `/v1/chat`). The skill only standardizes **citation format**, **answer shape**, and **safe hedging**; keep it in sync if JSON response shapes change.
 
 ---
 
@@ -149,7 +148,7 @@ The MCP server ships a **bundled skill tree** (Cursor-style: `apps/mcp-server/sk
 
 ## Status
 
-Monorepo **scaffold** is in place: `apps/web`, `apps/backend`, `apps/ai-api`, `apps/mcp-server`, plus Docker Compose for Postgres and MinIO. **MVP slice in progress**: backend **sessions**, **audio upload** → **AI-API** `/v1/transcribe`, **WebSocket** segment fan-out, and web **Transcribe** tab. **Next**: summary jobs, exports (MD/TXT/JSON), and MCP tools calling the real backend API.
+Monorepo **scaffold** is in place: `apps/web`, `apps/backend`, `apps/ai-api`, `apps/mcp-server`, plus Docker Compose for Postgres and MinIO. **MVP (v1) complete** for local use: **sessions** + **audio upload** → **AI-API** `/v1/transcribe`, **WebSocket** segment fan-out, web **Listen / Transcribe / Sessions / Ask** (cross-session RAG UI calling `/rag/search` and `/rag/answer`), **POST /sessions/{id}/summarize** (AI-API `/v1/chat`), **exports** (`md` / `txt` / `json`), MCP **list_sessions** / **get_transcript** / **get_summary** / **semantic_search** / **rag_answer** plus **list_skills** / **get_skill**. **Next product phase** (per roadmap): real auth & sync, then DOCX/PDF exports, pgvector-scale RAG, desktop companion.
 
 ### Speech-to-text (AI-API)
 
@@ -164,6 +163,10 @@ InkEcho’s `/v1/transcribe` endpoint does **speech-to-text** (STT), not machine
 `STT_PROVIDER=auto` prefers **OpenAI** when `OPENAI_API_KEY` is set; otherwise **OpenRouter** if `OPENROUTER_API_KEY` is set.
 
 **Claude / Anthropic:** there is no separate “Claude Code STT” drop-in here. Claude is a text (and some multimodal) model family; for **reliable batch transcription** the stack targets **Whisper-class** APIs. If OpenRouter exposes a model you want (including some multimodal chat models), point `OPENROUTER_TRANSCRIBE_MODEL` at it—check the provider’s supported **audio formats** (browser recordings are often **WebM**).
+
+### Chat / summarize (AI-API `/v1/chat`)
+
+Summaries use the same **OpenAI-compatible** `chat/completions` stack as above, controlled by **`CHAT_PROVIDER`** (`auto` | `openai` | `openrouter`). A **403** from OpenRouter with a message like **“violation of provider Terms Of Service”** usually means the **upstream model provider** (often **OpenAI** when the model id starts with `openai/`) is **declining the request**—commonly **region / billing / acceptable-use** rules—not a bug in InkEcho. **Mitigations:** pick a **non-OpenAI route** on OpenRouter (see [models](https://openrouter.ai/models); the repo default **`OPENROUTER_CHAT_MODEL`** avoids `openai/*`), use **`HTTPS_PROXY` / `HTTP_PROXY`** if your network requires it, or run **local** inference (**Ollama**, LM Studio, etc.) by setting **`OPENAI_BASE_URL`** to that server’s `/v1` URL and **`OPENAI_CHAT_MODEL`** to a pulled model name—**`OPENAI_API_KEY` may be left empty** when the base URL is **not** `https://api.openai.com/v1`.
 
 ## Local development (scaffold)
 
@@ -186,13 +189,13 @@ MCP uses **stdio**; the script prints the `node …/dist/index.js` command for C
 2. **Backend** (`apps/backend`): `python3 -m venv .venv && source .venv/bin/activate && pip install -r requirements.txt`, then `uvicorn app.main:app --reload --host 127.0.0.1 --port 8000`. Settings read from the environment; you can place a `.env` in `apps/backend/` or export vars from the root `.env` (see `.env.example`).
 3. **AI-API** (`apps/ai-api`): same pattern, `uvicorn app.main:app --reload --host 127.0.0.1 --port 8001`.
 4. **Web** (`apps/web`): from repo root, `npm install` then `npm run dev:web` (uses `apps/web/vite.config.ts` so the root is always `apps/web`, even from the monorepo root). The dev server proxies `/api` → backend (default `http://127.0.0.1:8000`); open **http://127.0.0.1:5173/**. Alternative: `cd apps/web && npm run dev`.
-5. **MCP server** (`apps/mcp-server`): `npm run dev:mcp` (stdio) or `npm run build:mcp && node apps/mcp-server/dist/index.js`. Bundled skills live under `apps/mcp-server/skills/`. Override the directory with `INK_ECHO_SKILLS_DIR` if needed.
+5. **MCP server** (`apps/mcp-server`): stdio for MCP clients, plus **optional** HTTP **`GET /health`** on `127.0.0.1` (default port **3033**, override with `INK_ECHO_MCP_HEALTH_PORT`; set to `0` to disable). The web app’s **Platform** status uses the backend’s `GET /health/platform`, which probes **Web frontend**, **AI-API**, **MCP /health** (expects JSON `instances: { expected, healthy }`, e.g. `1/1`), and treats **Backend** as up when this route runs. Run e.g. `INK_ECHO_MCP_HEALTH_PORT=3033 node apps/mcp-server/dist/index.js` or `npm run dev:mcp` (set the env in your shell or MCP host config). Bundled skills live under `apps/mcp-server/skills/`. Override the directory with `INK_ECHO_SKILLS_DIR` if needed.
 
 Root **npm** workspaces: `@ink-echo/web` and `@ink-echo/mcp-server`. Python apps keep their own `requirements.txt`.
 
 ## Testing the MCP server
 
-InkEcho MCP uses **stdio** (no HTTP port). A client must spawn `node …/dist/index.js` and talk over stdin/stdout.
+InkEcho MCP uses **stdio** for the MCP protocol. The same process can expose **`http://127.0.0.1:3033/health`** (default; see `INK_ECHO_MCP_HEALTH_PORT`) so the backend can include MCP in **Platform** health. A client must still spawn `node …/dist/index.js` and talk over stdin/stdout.
 
 ### A. Official MCP Inspector (good for manual testing)
 

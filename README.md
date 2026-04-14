@@ -1,2 +1,2 @@
 # InkEcho
-It is an application for summarizing, recording and export the repcaps of meetings/online lessons.
+It is an application for summarizing, recording and exporting the repcaps of meetings/online lessons.

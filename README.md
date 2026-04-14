@@ -118,7 +118,7 @@ The MCP server ships a **bundled skill tree** (Cursor-style: `apps/mcp-server/sk
 
 ---
 
-## Repository layout (target monorepo)
+## Repository layout (monorepo)
 
 - `apps/web` — Frontend  
 - `apps/backend` — Product API + WebSocket  
@@ -149,7 +149,17 @@ The MCP server ships a **bundled skill tree** (Cursor-style: `apps/mcp-server/sk
 
 ## Status
 
-This repository is **greenfield**: architecture and scope are defined here; implementation (scaffolding the four apps, APIs, and local dev orchestration) follows in code.
+Monorepo **scaffold** is in place: `apps/web`, `apps/backend`, `apps/ai-api`, `apps/mcp-server`, plus Docker Compose for Postgres and MinIO. Session/STT/WebSocket work is **not** implemented yet (next roadmap steps).
+
+## Local development (scaffold)
+
+1. **Infra (optional for hello-world):** from the repo root, `cp .env.example .env` and run `docker compose up -d` for Postgres (`5432`) and MinIO (`9000` / console `9001`).
+2. **Backend** (`apps/backend`): `python3 -m venv .venv && source .venv/bin/activate && pip install -r requirements.txt`, then `uvicorn app.main:app --reload --host 127.0.0.1 --port 8000`. Settings read from the environment; you can place a `.env` in `apps/backend/` or export vars from the root `.env` (see `.env.example`).
+3. **AI-API** (`apps/ai-api`): same pattern, `uvicorn app.main:app --reload --host 127.0.0.1 --port 8001`.
+4. **Web** (`apps/web`): from repo root, `npm install` then `npm run dev:web`. The dev server proxies `/api` → backend (default `http://127.0.0.1:8000`), so open the app and it will call `/api/health`.
+5. **MCP server** (`apps/mcp-server`): `npm run dev:mcp` (stdio) or `npm run build:mcp && node apps/mcp-server/dist/index.js`. Bundled skills live under `apps/mcp-server/skills/`. Override the directory with `INK_ECHO_SKILLS_DIR` if needed.
+
+Root **npm** workspaces: `@ink-echo/web` and `@ink-echo/mcp-server`. Python apps keep their own `requirements.txt`.
 
 ## License
 

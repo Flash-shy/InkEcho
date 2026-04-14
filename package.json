@@ -1,0 +1,17 @@
+{
+  "name": "ink-echo",
+  "private": true,
+  "workspaces": [
+    "apps/web",
+    "apps/mcp-server"
+  ],
+  "scripts": {
+    "dev:web": "npm run dev -w @ink-echo/web",
+    "dev:mcp": "npm run dev -w @ink-echo/mcp-server",
+    "build:web": "npm run build -w @ink-echo/web",
+    "build:mcp": "npm run build -w @ink-echo/mcp-server"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

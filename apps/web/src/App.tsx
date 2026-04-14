@@ -13,8 +13,13 @@ import {
 } from "./theme";
 import { RagPanel } from "./RagPanel";
 import { TranscribePanel, type TranscribeClip } from "./TranscribePanel";
-
-type MainTab = "listen" | "transcribe" | "sessions" | "rag";
+import {
+  getStoredMainTab,
+  getStoredSessionSummaries,
+  setStoredMainTab,
+  setStoredSessionSummaries,
+  type MainTab,
+} from "./uiPersistence";
 
 export default function App() {
   const tabIds = useId();
@@ -23,11 +28,13 @@ export default function App() {
   const sessionsPanelId = `${tabIds}-panel-sessions`;
   const ragPanelId = `${tabIds}-panel-rag`;
 
-  const [mainTab, setMainTab] = useState<MainTab>("listen");
+  const [mainTab, setMainTab] = useState<MainTab>(() => getStoredMainTab());
   const [healthError, setHealthError] = useState<string | null>(null);
   const [healthLoading, setHealthLoading] = useState(true);
   const [transcribeQueue, setTranscribeQueue] = useState<TranscribeClip[]>([]);
-  const [sessionSummaries, setSessionSummaries] = useState<Record<string, SessionSummaryState>>({});
+  const [sessionSummaries, setSessionSummaries] = useState<Record<string, SessionSummaryState>>(
+    () => getStoredSessionSummaries(),
+  );
   const [themePref, setThemePref] = useState<ThemePreference>(() => getStoredThemePreference());
 
   const mergeSessionSummary = useCallback((sessionId: string, patch: Partial<SessionSummaryState>) => {
@@ -36,6 +43,15 @@ export default function App() {
       return { ...prev, [sessionId]: { ...base, ...patch } };
     });
   }, []);
+
+  const setMainTabPersist = useCallback((tab: MainTab) => {
+    setMainTab(tab);
+    setStoredMainTab(tab);
+  }, []);
+
+  useEffect(() => {
+    setStoredSessionSummaries(sessionSummaries);
+  }, [sessionSummaries]);
 
   useEffect(() => {
     fetch("/api/health")
@@ -104,7 +120,7 @@ export default function App() {
             aria-controls={listenPanelId}
             tabIndex={mainTab === "listen" ? 0 : -1}
             className={`tab-pill ${mainTab === "listen" ? "tab-pill-active" : ""}`}
-            onClick={() => setMainTab("listen")}
+            onClick={() => setMainTabPersist("listen")}
           >
             Listen
           </button>
@@ -116,7 +132,7 @@ export default function App() {
             aria-controls={transcribePanelId}
             tabIndex={mainTab === "transcribe" ? 0 : -1}
             className={`tab-pill ${mainTab === "transcribe" ? "tab-pill-active" : ""}`}
-            onClick={() => setMainTab("transcribe")}
+            onClick={() => setMainTabPersist("transcribe")}
           >
             Transcribe
           </button>
@@ -128,7 +144,7 @@ export default function App() {
             aria-controls={sessionsPanelId}
             tabIndex={mainTab === "sessions" ? 0 : -1}
             className={`tab-pill ${mainTab === "sessions" ? "tab-pill-active" : ""}`}
-            onClick={() => setMainTab("sessions")}
+            onClick={() => setMainTabPersist("sessions")}
           >
             Sessions
           </button>
@@ -140,7 +156,7 @@ export default function App() {
             aria-controls={ragPanelId}
             tabIndex={mainTab === "rag" ? 0 : -1}
             className={`tab-pill ${mainTab === "rag" ? "tab-pill-active" : ""}`}
-            onClick={() => setMainTab("rag")}
+            onClick={() => setMainTabPersist("rag")}
           >
             Ask
           </button>
@@ -161,7 +177,7 @@ export default function App() {
               const captureKind: CaptureKind = options?.captureKind ?? "upload";
               setTranscribeQueue((q) => [...q, { id: crypto.randomUUID(), blob, label, captureKind }]);
               if (options?.focusTranscribe !== false) {
-                setMainTab("transcribe");
+                setMainTabPersist("transcribe");
               }
             }}
           />

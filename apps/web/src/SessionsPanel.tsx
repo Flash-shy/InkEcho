@@ -3,6 +3,7 @@ import { useCallback, useEffect, useState } from "react";
 import { startMeetingMinutes } from "./inkecho";
 import { formatSegmentMeta, type TranscriptSegmentRow } from "./transcriptFormat";
 import type { SessionSummaryState } from "./sessionSummary";
+import { getStoredSessionsSelected, setStoredSessionsSelected } from "./uiPersistence";
 
 type SessionListItem = {
   id: string;
@@ -85,7 +86,7 @@ export function SessionsPanel({ active, sessionSummaries, mergeSessionSummary }:
   const [list, setList] = useState<SessionListItem[]>([]);
   const [listError, setListError] = useState<string | null>(null);
   const [listLoading, setListLoading] = useState(false);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(() => getStoredSessionsSelected());
   const [detail, setDetail] = useState<SessionDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailError, setDetailError] = useState<string | null>(null);
@@ -110,6 +111,10 @@ export function SessionsPanel({ active, sessionSummaries, mergeSessionSummary }:
     if (!active) return;
     void refreshList();
   }, [active, refreshList]);
+
+  useEffect(() => {
+    setStoredSessionsSelected(selectedId);
+  }, [selectedId]);
 
   const loadDetail = useCallback(
     async (id: string) => {
@@ -138,6 +143,21 @@ export function SessionsPanel({ active, sessionSummaries, mergeSessionSummary }:
     },
     [mergeSessionSummary],
   );
+
+  useEffect(() => {
+    if (!active || listLoading || list.length === 0 || !selectedId) return;
+    if (!list.some((s) => s.id === selectedId)) {
+      setSelectedId(null);
+      setDetail(null);
+    }
+  }, [active, list, listLoading, selectedId]);
+
+  useEffect(() => {
+    if (!active || !selectedId || list.length === 0) return;
+    if (!list.some((s) => s.id === selectedId)) return;
+    if (detail?.id === selectedId) return;
+    void loadDetail(selectedId);
+  }, [active, selectedId, list, detail?.id, loadDetail]);
 
   const pollSummaryUntilDone = useCallback(
     (sessionId: string) => {

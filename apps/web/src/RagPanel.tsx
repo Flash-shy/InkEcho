@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 
 import { ragAnswer, reindexSessionForRag, semanticSearch } from "./inkecho";
 import type { RagAnswerResponse, RagSearchResponse } from "./inkecho";
+import { getStoredRagState, setStoredRagState } from "./uiPersistence";
 
 type SessionPick = { id: string; title: string | null; status: string };
 
@@ -10,19 +11,20 @@ type Props = {
 };
 
 export function RagPanel({ active }: Props) {
+  const [bootRag] = useState(() => getStoredRagState());
   const [sessions, setSessions] = useState<SessionPick[]>([]);
   const [sessionsErr, setSessionsErr] = useState<string | null>(null);
-  const [scopeIds, setScopeIds] = useState<Set<string>>(new Set());
-  const [query, setQuery] = useState("");
-  const [searchLimit, setSearchLimit] = useState(8);
-  const [answerLimit, setAnswerLimit] = useState(6);
+  const [scopeIds, setScopeIds] = useState<Set<string>>(() => new Set(bootRag?.scopeIds ?? []));
+  const [query, setQuery] = useState(() => bootRag?.query ?? "");
+  const [searchLimit, setSearchLimit] = useState(() => bootRag?.searchLimit ?? 8);
+  const [answerLimit, setAnswerLimit] = useState(() => bootRag?.answerLimit ?? 6);
 
   const [searchLoading, setSearchLoading] = useState(false);
   const [answerLoading, setAnswerLoading] = useState(false);
   const [searchErr, setSearchErr] = useState<string | null>(null);
   const [answerErr, setAnswerErr] = useState<string | null>(null);
-  const [searchOut, setSearchOut] = useState<RagSearchResponse | null>(null);
-  const [answerOut, setAnswerOut] = useState<RagAnswerResponse | null>(null);
+  const [searchOut, setSearchOut] = useState<RagSearchResponse | null>(() => bootRag?.searchOut ?? null);
+  const [answerOut, setAnswerOut] = useState<RagAnswerResponse | null>(() => bootRag?.answerOut ?? null);
 
   const [reindexBusy, setReindexBusy] = useState<string | null>(null);
   const [reindexMsg, setReindexMsg] = useState<string | null>(null);
@@ -44,6 +46,19 @@ export function RagPanel({ active }: Props) {
     if (!active) return;
     void refreshSessions();
   }, [active, refreshSessions]);
+
+  const scopeIdsSorted = [...scopeIds].sort();
+  const scopeIdsKey = scopeIdsSorted.join(",");
+  useEffect(() => {
+    setStoredRagState({
+      scopeIds: scopeIdsSorted,
+      query,
+      searchLimit,
+      answerLimit,
+      searchOut,
+      answerOut,
+    });
+  }, [scopeIdsKey, query, searchLimit, answerLimit, searchOut, answerOut]);
 
   const toggleScope = (id: string) => {
     setScopeIds((prev) => {

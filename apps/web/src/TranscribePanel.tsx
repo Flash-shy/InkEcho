@@ -4,6 +4,7 @@ import { type CaptureKind, captureKindMeta } from "./captureTypes";
 import { startMeetingMinutes } from "./inkecho";
 import { formatSegmentMeta, type TranscriptSegmentRow } from "./transcriptFormat";
 import type { SessionSummaryState } from "./sessionSummary";
+import { getStoredTranscribeCompleted, setStoredTranscribeCompleted } from "./uiPersistence";
 
 export type TranscribeClip = { id: string; blob: Blob; label: string; captureKind: CaptureKind };
 
@@ -66,6 +67,7 @@ export function TranscribePanel({
   const [resultLabel, setResultLabel] = useState<string | null>(null);
   const [runningClipId, setRunningClipId] = useState<string | null>(null);
   const [completedTranscripts, setCompletedTranscripts] = useState<CompletedTranscript[]>([]);
+  const [transcribeHydrated, setTranscribeHydrated] = useState(false);
   const wsRef = useRef<WebSocket | null>(null);
   const resultsAnchorRef = useRef<HTMLDivElement | null>(null);
   /** Latest segments for this run (updated in segment handler). Avoids nested setState on transcribe_done (Strict Mode double-invokes updaters → duplicate history rows). */
@@ -104,13 +106,15 @@ export function TranscribePanel({
     segmentsRef.current = segments;
   }, [segments]);
 
-  /** Queue emptied: reset last run UI. */
+  /**
+   * Queue emptied: stop any in-flight run and reset live UI.
+   * Completed transcripts stay (and survive refresh via localStorage + API).
+   */
   useEffect(() => {
     if (clips.length > 0) return;
     teardownWs();
     setSegments([]);
     segmentsRef.current = [];
-    setCompletedTranscripts([]);
     setSessionId(null);
     setError(null);
     setStatusLine(null);
@@ -118,6 +122,49 @@ export function TranscribePanel({
     setResultLabel(null);
     setRunningClipId(null);
   }, [clips.length, teardownWs]);
+
+  useEffect(() => {
+    const stubs = getStoredTranscribeCompleted();
+    if (stubs.length === 0) {
+      setTranscribeHydrated(true);
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      const loaded: CompletedTranscript[] = [];
+      const seen = new Set<string>();
+      for (const item of stubs) {
+        if (seen.has(item.key)) continue;
+        seen.add(item.key);
+        try {
+          const r = await fetch(`/api/sessions/${item.key}`);
+          if (!r.ok) continue;
+          const row = (await r.json()) as { segments?: WsSegment[] };
+          const segs = Array.isArray(row.segments) ? row.segments.map((s) => ({ ...s })) : [];
+          loaded.push({
+            key: item.key,
+            clipId: item.clipId,
+            clipLabel: item.clipLabel,
+            segments: segs,
+          });
+        } catch {
+          /* skip missing session */
+        }
+      }
+      if (!cancelled && loaded.length > 0) setCompletedTranscripts(loaded);
+      if (!cancelled) setTranscribeHydrated(true);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!transcribeHydrated) return;
+    setStoredTranscribeCompleted(
+      completedTranscripts.map((t) => ({ key: t.key, clipId: t.clipId, clipLabel: t.clipLabel })),
+    );
+  }, [completedTranscripts, transcribeHydrated]);
 
   const keysSig = completedTranscripts.map((t) => t.key).join(",");
 

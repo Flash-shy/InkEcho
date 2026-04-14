@@ -248,6 +248,16 @@ code {
   filter: brightness(1.03);
 }
 
+.btn-secondary {
+  background: var(--surface-elevated);
+  border-color: var(--border);
+  color: var(--ink);
+}
+
+.btn-secondary:hover:not(:disabled) {
+  border-color: rgba(26, 31, 46, 0.2);
+}
+
 .btn-danger {
   background: rgba(196, 92, 62, 0.12);
   border-color: rgba(196, 92, 62, 0.35);
@@ -525,6 +535,32 @@ code {
 .transcribe-results-anchor {
   scroll-margin-top: 1.25rem;
   outline: none;
+}
+
+.transcript-block-targeted {
+  outline: 2px solid var(--accent);
+  outline-offset: 4px;
+  border-radius: 8px;
+  transition: outline-color 0.25s ease;
+}
+
+.transcript-block {
+  margin: 0 0 1.35rem;
+  padding-bottom: 1rem;
+  border-bottom: 1px solid var(--border);
+  scroll-margin-top: 1.25rem;
+}
+
+.transcript-block:last-of-type {
+  border-bottom: none;
+  margin-bottom: 0;
+}
+
+.transcribe-timing-note {
+  font-size: 0.88rem;
+  margin: 0 0 0.85rem;
+  line-height: 1.45;
+  max-width: 44rem;
 }
 
 .transcribe-meta {

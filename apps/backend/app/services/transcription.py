@@ -17,7 +17,16 @@ async def call_ai_transcribe(data: bytes, filename: str, content_type: str | Non
     files = {"file": (filename, data, content_type or "application/octet-stream")}
     async with httpx.AsyncClient(timeout=600.0) as client:
         r = await client.post(url, headers=headers, files=files)
-        r.raise_for_status()
+        if r.status_code >= 400:
+            detail: str
+            try:
+                body = r.json()
+                d = body.get("detail")
+                detail = d if isinstance(d, str) else r.text
+            except Exception:
+                detail = r.text or r.reason_phrase
+            msg = f"AI-API {r.status_code}: {detail}"[:4000]
+            raise RuntimeError(msg)
         return r.json()
 
 

@@ -149,7 +149,21 @@ The MCP server ships a **bundled skill tree** (Cursor-style: `apps/mcp-server/sk
 
 ## Status
 
-Monorepo **scaffold** is in place: `apps/web`, `apps/backend`, `apps/ai-api`, `apps/mcp-server`, plus Docker Compose for Postgres and MinIO. **MVP slice in progress**: backend **sessions** (Postgres), **audio upload** → **AI-API** `/v1/transcribe` (mock or OpenAI Whisper when `OPENAI_API_KEY` is set), **WebSocket** segment fan-out, and web **Transcribe** tab wired to that flow. **Next**: summary jobs, exports (MD/TXT/JSON), and MCP tools calling the real backend API.
+Monorepo **scaffold** is in place: `apps/web`, `apps/backend`, `apps/ai-api`, `apps/mcp-server`, plus Docker Compose for Postgres and MinIO. **MVP slice in progress**: backend **sessions**, **audio upload** → **AI-API** `/v1/transcribe`, **WebSocket** segment fan-out, and web **Transcribe** tab. **Next**: summary jobs, exports (MD/TXT/JSON), and MCP tools calling the real backend API.
+
+### Speech-to-text (AI-API)
+
+InkEcho’s `/v1/transcribe` endpoint does **speech-to-text** (STT), not machine translation. You are **not** required to use OpenAI:
+
+| Mode | Configuration |
+|------|----------------|
+| **OpenAI Whisper** | Set `OPENAI_API_KEY`. Optional: `OPENAI_BASE_URL` for compatible proxies. Uses `/v1/audio/transcriptions` with `whisper-1`. |
+| **OpenRouter** | Set `OPENROUTER_API_KEY`. Set `STT_PROVIDER=openrouter` (or leave `STT_PROVIDER=auto` and omit `OPENAI_API_KEY` so OpenRouter is chosen). Optional: `OPENROUTER_TRANSCRIBE_MODEL` (default **`mistralai/voxtral-small-24b-2507`**). Set `OPENROUTER_HTTP_REFERER` / `OPENROUTER_X_TITLE` as [recommended](https://openrouter.ai/docs/quick-start). Uses `chat/completions` with base64 `input_audio`. When **`ffmpeg`** is on `PATH`, AI-API **normalizes** input to 16 kHz mono WAV. **`HTTPS_PROXY` / `HTTP_PROXY`** are respected (`httpx` `trust_env=True`) if your environment needs a proxy. **403** from OpenRouter often means [moderation](https://openrouter.ai/docs/errors) or the **upstream provider** rejected the call (not a “need VPN to reach openrouter.ai” issue if `curl` to `openrouter.ai` already works). Try another **audio** model, check credits/activity on OpenRouter, or use **`STT_PROVIDER=openai`** with `OPENAI_API_KEY`. |
+| **Mock** | No keys: returns placeholder segments for pipeline testing. |
+
+`STT_PROVIDER=auto` prefers **OpenAI** when `OPENAI_API_KEY` is set; otherwise **OpenRouter** if `OPENROUTER_API_KEY` is set.
+
+**Claude / Anthropic:** there is no separate “Claude Code STT” drop-in here. Claude is a text (and some multimodal) model family; for **reliable batch transcription** the stack targets **Whisper-class** APIs. If OpenRouter exposes a model you want (including some multimodal chat models), point `OPENROUTER_TRANSCRIBE_MODEL` at it—check the provider’s supported **audio formats** (browser recordings are often **WebM**).
 
 ## Local development (scaffold)
 

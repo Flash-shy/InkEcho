@@ -416,7 +416,8 @@ export function ListenPanel({ onClipReady }: ListenPanelProps) {
     setUploadFile(null);
   }, []);
 
-  const uploadAccept = "audio/*,video/*,.webm,.m4a,.mp3,.wav,.ogg,.mp4,.mov";
+  const uploadAccept =
+    "audio/*,video/*,.webm,.m4a,.mp3,.wav,.ogg,.opus,.flac,.aac,.aiff,.mp4,.mov,.mkv,.mpeg,.mpga";
 
   return (
     <div className="listen">

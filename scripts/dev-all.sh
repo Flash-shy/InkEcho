@@ -8,12 +8,15 @@ LOG_DIR="$ROOT/logs"
 mkdir -p "$LOG_DIR"
 
 DO_DOCKER=false
+CLEAN_PORTS=true
 for arg in "$@"; do
   case "$arg" in
     --docker) DO_DOCKER=true ;;
+    --no-clean) CLEAN_PORTS=false ;;
     -h|--help)
-      echo "Usage: $0 [--docker]"
-      echo "  --docker   Run 'docker compose up -d' first (Postgres + MinIO)."
+      echo "Usage: $0 [--docker] [--no-clean]"
+      echo "  --docker Run 'docker compose up -d' first (Postgres + MinIO)."
+      echo "  --no-clean   Do not free ports 8000/8001/5173 before starting (default is to stop them)."
       exit 0
       ;;
   esac
@@ -40,6 +43,12 @@ ensure_venv() (
 
 if [[ "$DO_DOCKER" == true ]]; then
   (cd "$ROOT" && docker compose up -d)
+fi
+
+if [[ "$CLEAN_PORTS" == true ]]; then
+  echo "Freeing dev ports 8000 / 8001 / 5173 (avoid 'Address already in use')…"
+  bash "$ROOT/scripts/stop-all.sh"
+  echo ""
 fi
 
 if [[ ! -d "$ROOT/node_modules" ]]; then

@@ -190,7 +190,13 @@ npm run inspect:mcp
 
 This builds `apps/mcp-server` and launches [@modelcontextprotocol/inspector](https://www.npmjs.com/package/@modelcontextprotocol/inspector). Open the UI (often **http://localhost:6274**), connect to the server it starts, then under **Tools** try e.g. **`list_skills`** or **`get_skill`** with arguments `{"skillId":"meeting-minutes"}`.
 
-Non-interactive / terminal smoke test:
+Non-interactive / terminal smoke test (no Inspector UI; uses SDK client):
+
+```bash
+npm run test:mcp
+```
+
+Inspector CLI (requires `--method` etc. for your inspector version):
 
 ```bash
 npm run inspect:mcp:cli

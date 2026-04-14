@@ -158,7 +158,11 @@ Monorepo **scaffold** is in place: `apps/web`, `apps/backend`, `apps/ai-api`, `a
 ```bash
 ./scripts/dev-all.sh # backend + ai-api + web (logs in ./logs/)
 ./scripts/dev-all.sh --docker # same, after docker compose up -d
+./scripts/stop-all.sh        # stop listeners on 8000 / 8001 / 5173 (+ recorded PIDs)
+./scripts/stop-all.sh --force # if SIGTERM was not enough (SIGKILL)
 ```
+
+If `dev-all.sh` returns to the shell immediately, something likely exited (e.g. port in use); use `stop-all.sh` to clear ports, check `logs/*.log`, then start again.
 
 MCP uses **stdio**; the script prints the `node …/dist/index.js` command for Cursor (or run `npm run dev:mcp` in another terminal). See script header comments.
 

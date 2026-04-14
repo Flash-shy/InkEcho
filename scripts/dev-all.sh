@@ -83,8 +83,10 @@ echo "    node $ROOT/apps/mcp-server/dist/index.js"
 echo "  Or watch mode in another terminal:"
 echo "    cd $ROOT && npm run dev:mcp"
 echo ""
+printf '%s\n' "${PIDS[@]}" >"$LOG_DIR/dev-all.pids"
+
 echo "Tail logs: tail -f $LOG_DIR/backend.log $LOG_DIR/ai-api.log $LOG_DIR/web.log"
-echo "Stop all:    Ctrl+C"
+echo "Stop all:    Ctrl+C  or  $ROOT/scripts/stop-all.sh"
 echo ""
 
 wait "${PIDS[@]}"

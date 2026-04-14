@@ -9,7 +9,9 @@
     "dev:web": "vite --config ./apps/web/vite.config.ts",
     "dev:mcp": "npm run dev -w @ink-echo/mcp-server",
     "build:web": "vite build --config ./apps/web/vite.config.ts",
-    "build:mcp": "npm run build -w @ink-echo/mcp-server"
+    "build:mcp": "npm run build -w @ink-echo/mcp-server",
+    "inspect:mcp": "npm run build:mcp && npx -y @modelcontextprotocol/inspector node apps/mcp-server/dist/index.js",
+    "inspect:mcp:cli": "npm run build:mcp && npx -y @modelcontextprotocol/inspector --cli node apps/mcp-server/dist/index.js"
   },
   "engines": {
     "node": ">=20"

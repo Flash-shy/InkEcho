@@ -176,6 +176,50 @@ MCP uses **stdio**; the script prints the `node …/dist/index.js` command for C
 
 Root **npm** workspaces: `@ink-echo/web` and `@ink-echo/mcp-server`. Python apps keep their own `requirements.txt`.
 
+## Testing the MCP server
+
+InkEcho MCP uses **stdio** (no HTTP port). A client must spawn `node …/dist/index.js` and talk over stdin/stdout.
+
+### A. Official MCP Inspector (good for manual testing)
+
+From the **repo root** (downloads the inspector via `npx` the first time):
+
+```bash
+npm run inspect:mcp
+```
+
+This builds `apps/mcp-server` and launches [@modelcontextprotocol/inspector](https://www.npmjs.com/package/@modelcontextprotocol/inspector). Open the UI (often **http://localhost:6274**), connect to the server it starts, then under **Tools** try e.g. **`list_skills`** or **`get_skill`** with arguments `{"skillId":"meeting-minutes"}`.
+
+Non-interactive / terminal smoke test:
+
+```bash
+npm run inspect:mcp:cli
+```
+
+Inspector may recommend **Node 22+**; if the UI fails to start, upgrade Node or use Cursor (below).
+
+### B. Cursor
+
+1. Run `npm run build:mcp` so `apps/mcp-server/dist/index.js` exists.
+2. In Cursor MCP settings, add a server (paths vary by Cursor version), for example:
+
+```json
+{
+  "mcpServers": {
+    "ink-echo": {
+      "command": "node",
+      "args": ["/absolute/path/to/InkEcho/apps/mcp-server/dist/index.js"]
+    }
+  }
+}
+```
+
+Optional env: `INK_ECHO_SKILLS_DIR` to point at a custom skills directory.
+
+### C. Backend dependency
+
+The current stub tools (`list_sessions`, `get_transcript`, …) do not require the FastAPI backend. When those call the real API, start `./scripts/dev-all.sh` (or at least the backend) before testing flows that hit InkEcho data.
+
 ## License
 
 See [LICENSE](LICENSE).

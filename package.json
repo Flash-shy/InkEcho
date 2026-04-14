@@ -6,9 +6,9 @@
     "apps/mcp-server"
   ],
   "scripts": {
-    "dev:web": "npm run dev -w @ink-echo/web",
+    "dev:web": "vite --config ./apps/web/vite.config.ts",
     "dev:mcp": "npm run dev -w @ink-echo/mcp-server",
-    "build:web": "npm run build -w @ink-echo/web",
+    "build:web": "vite build --config ./apps/web/vite.config.ts",
     "build:mcp": "npm run build -w @ink-echo/mcp-server"
   },
   "engines": {

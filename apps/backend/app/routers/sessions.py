@@ -19,6 +19,7 @@ from app.services.export_session import (
     export_as_txt,
     export_filename,
 )
+from app.services.meeting_minutes import run_meeting_minutes_job
 from app.services.summary import run_summary_job
 from app.services.transcription import run_transcription_job
 
@@ -119,6 +120,39 @@ async def start_summarize(
     await db.refresh(row)
     hub = request.app.state.ws_hub
     background_tasks.add_task(run_summary_job, session_id, hub)
+    return row
+
+
+@router.post("/{session_id}/meeting-minutes", response_model=SessionOut)
+async def start_meeting_minutes(
+    request: Request,
+    session_id: UUID,
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db),
+):
+    q = await db.execute(
+        select(SessionModel)
+        .options(selectinload(SessionModel.segments))
+        .where(SessionModel.id == session_id)
+    )
+    row = q.scalar_one_or_none()
+    if not row:
+        raise HTTPException(status_code=404, detail="Session not found")
+    if row.status != SessionStatus.ready.value:
+        raise HTTPException(
+            status_code=400,
+            detail="Session must be transcribed (status=ready) before meeting minutes",
+        )
+    if not row.segments:
+        raise HTTPException(status_code=400, detail="No transcript segments")
+    if row.minutes_status == "running":
+        raise HTTPException(status_code=409, detail="Meeting minutes already in progress")
+    row.minutes_status = "running"
+    row.minutes_error = None
+    await db.commit()
+    await db.refresh(row)
+    hub = request.app.state.ws_hub
+    background_tasks.add_task(run_meeting_minutes_job, session_id, hub)
     return row
 
 

@@ -5,7 +5,7 @@ type PlatformCheck = {
   label: string;
   ok: boolean;
   error?: string | null;
-  /** e.g. MCP instances 1/1 */
+  /** e.g. MCP probe line: pid · mode · port · stdio */
   detail?: string | null;
 };
 

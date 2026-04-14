@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 
 import { type CaptureKind, captureKindMeta } from "./captureTypes";
+import { startMeetingMinutes } from "./inkecho";
 import { formatSegmentMeta, type TranscriptSegmentRow } from "./transcriptFormat";
 import type { SessionSummaryState } from "./sessionSummary";
 
@@ -37,6 +38,9 @@ type ApiSession = {
   summary_status?: string;
   summary_text?: string | null;
   summary_error?: string | null;
+  minutes_status?: string;
+  minutes_text?: string | null;
+  minutes_error?: string | null;
 };
 
 type Props = {
@@ -134,6 +138,9 @@ export function TranscribePanel({
                 summary_status: s.summary_status ?? "idle",
                 summary_text: s.summary_text,
                 summary_error: s.summary_error,
+                minutes_status: s.minutes_status ?? "idle",
+                minutes_text: s.minutes_text,
+                minutes_error: s.minutes_error,
               },
             ] as const;
           } catch {
@@ -175,6 +182,9 @@ export function TranscribePanel({
           summary_status: st,
           summary_text: s.summary_text,
           summary_error: s.summary_error,
+          minutes_status: s.minutes_status ?? "idle",
+          minutes_text: s.minutes_text,
+          minutes_error: s.minutes_error,
         });
         if (st === "ready" || st === "error") return;
       } catch {
@@ -194,12 +204,18 @@ export function TranscribePanel({
             summary_status?: string;
             summary_text?: string | null;
             summary_error?: string | null;
+            minutes_status?: string;
+            minutes_text?: string | null;
+            minutes_error?: string | null;
           };
           if (s.summary_status === "ready" && s.summary_text?.trim()) {
             mergeSessionSummary(sessionKey, {
               summary_status: "ready",
               summary_text: s.summary_text,
               summary_error: s.summary_error,
+              minutes_status: s.minutes_status ?? "idle",
+              minutes_text: s.minutes_text,
+              minutes_error: s.minutes_error,
             });
             requestAnimationFrame(() => {
               const el = document.getElementById(`summary-transcribe-${sessionKey}`);
@@ -237,6 +253,89 @@ export function TranscribePanel({
       }
     },
     [pollSummaryUntilDone, mergeSessionSummary],
+  );
+
+  const pollMinutesUntilDone = useCallback(
+    (sessionKey: string) => {
+      const started = Date.now();
+      const tick = async () => {
+        if (Date.now() - started > 120_000) {
+          mergeSessionSummary(sessionKey, {
+            minutes_status: "error",
+            minutes_error: "Meeting minutes timed out — check backend and AI-API logs.",
+          });
+          return;
+        }
+        try {
+          const r = await fetch(`/api/sessions/${sessionKey}`);
+          if (!r.ok) {
+            window.setTimeout(tick, 450);
+            return;
+          }
+          const s = (await r.json()) as ApiSession;
+          const st = s.minutes_status ?? "idle";
+          mergeSessionSummary(sessionKey, {
+            summary_status: s.summary_status ?? "idle",
+            summary_text: s.summary_text,
+            summary_error: s.summary_error,
+            minutes_status: st,
+            minutes_text: s.minutes_text,
+            minutes_error: s.minutes_error,
+          });
+          if (st === "ready" || st === "error") return;
+        } catch {
+          /* continue */
+        }
+        window.setTimeout(tick, 450);
+      };
+      void tick();
+    },
+    [mergeSessionSummary],
+  );
+
+  const onMeetingMinutes = useCallback(
+    async (sessionKey: string) => {
+      try {
+        const gr = await fetch(`/api/sessions/${sessionKey}`);
+        if (gr.ok) {
+          const s = (await gr.json()) as ApiSession;
+          if (s.minutes_status === "ready" && s.minutes_text?.trim()) {
+            mergeSessionSummary(sessionKey, {
+              minutes_status: "ready",
+              minutes_text: s.minutes_text,
+              minutes_error: s.minutes_error,
+              summary_status: s.summary_status ?? "idle",
+              summary_text: s.summary_text,
+              summary_error: s.summary_error,
+            });
+            requestAnimationFrame(() => {
+              const el = document.getElementById(`minutes-transcribe-${sessionKey}`);
+              if (el) {
+                el.scrollIntoView({ behavior: "smooth", block: "start", inline: "nearest" });
+                el.classList.add("transcript-block-targeted");
+                window.setTimeout(() => el.classList.remove("transcript-block-targeted"), 1800);
+              }
+            });
+            return;
+          }
+        }
+      } catch {
+        /* POST */
+      }
+
+      mergeSessionSummary(sessionKey, {
+        minutes_status: "running",
+        minutes_error: undefined,
+      });
+      try {
+        await startMeetingMinutes(sessionKey);
+        pollMinutesUntilDone(sessionKey);
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : "Meeting minutes request failed";
+        mergeSessionSummary(sessionKey, { minutes_status: "error", minutes_error: msg });
+      }
+    },
+    [pollMinutesUntilDone, mergeSessionSummary],
   );
 
   const onExport = useCallback(async (sessionKey: string, format: "md" | "txt" | "json") => {
@@ -548,6 +647,10 @@ export function TranscribePanel({
           const sumStatus = sum?.summary_status ?? "idle";
           const summarizing = sumStatus === "running";
           const hasSummary = sumStatus === "ready" && Boolean(sum?.summary_text?.trim());
+          const minStatus = sum?.minutes_status ?? "idle";
+          const minutesRunning = minStatus === "running";
+          const hasMinutes = minStatus === "ready" && Boolean(sum?.minutes_text?.trim());
+          const aiBusy = summarizing || minutesRunning;
           return (
             <section key={run.key} id={`transcript-block-${run.key}`} className="transcript-block">
               <p className="muted transcribe-meta">
@@ -572,10 +675,30 @@ export function TranscribePanel({
                 >
                   {summarizing ? "Summarizing…" : hasSummary ? "View summary" : "Summarize"}
                 </button>
-                               <button
+                <button
+                  type="button"
+                  className={`btn btn-small ${hasMinutes ? "btn-secondary" : "btn-primary"}`}
+                  disabled={minutesRunning}
+                  title={
+                    hasMinutes
+                      ? "Scroll to meeting minutes below (no API call)."
+                      : "Structured minutes: topics, decisions, open questions, action items."
+                  }
+                  onClick={() => {
+                    if (hasMinutes) {
+                      const el = document.getElementById(`minutes-transcribe-${run.key}`);
+                      el?.scrollIntoView({ behavior: "smooth", block: "start", inline: "nearest" });
+                      el?.classList.add("transcript-block-targeted");
+                      window.setTimeout(() => el?.classList.remove("transcript-block-targeted"), 1800);
+                    } else void onMeetingMinutes(run.key);
+                  }}
+                >
+                  {minutesRunning ? "Minutes…" : hasMinutes ? "View minutes" : "Meeting minutes"}
+                </button>
+                <button
                   type="button"
                   className="btn btn-small"
-                  disabled={summarizing}
+                  disabled={aiBusy}
                   onClick={() => void onExport(run.key, "md")}
                 >
                   Export .md
@@ -583,7 +706,7 @@ export function TranscribePanel({
                 <button
                   type="button"
                   className="btn btn-small"
-                  disabled={summarizing}
+                  disabled={aiBusy}
                   onClick={() => void onExport(run.key, "txt")}
                 >
                   Export .txt
@@ -591,7 +714,7 @@ export function TranscribePanel({
                 <button
                   type="button"
                   className="btn btn-small"
-                  disabled={summarizing}
+                  disabled={aiBusy}
                   onClick={() => void onExport(run.key, "json")}
                 >
                   Export .json
@@ -606,6 +729,17 @@ export function TranscribePanel({
                 <div className="summary-block" id={`summary-transcribe-${run.key}`}>
                   <h4 className="summary-h">Summary</h4>
                   <pre className="summary-pre">{sum.summary_text}</pre>
+                </div>
+              )}
+              {sum?.minutes_error && (
+                <div className="banner-err" role="alert">
+                  {sum.minutes_error}
+                </div>
+              )}
+              {sum?.minutes_text && minStatus === "ready" && (
+                <div className="summary-block minutes-block" id={`minutes-transcribe-${run.key}`}>
+                  <h4 className="summary-h">Meeting minutes</h4>
+                  <pre className="summary-pre">{sum.minutes_text}</pre>
                 </div>
               )}
               <h3 className="transcribe-result-h" id={`transcript-${run.key}`}>

@@ -30,8 +30,24 @@ async def _check_ai_api() -> tuple[bool, str | None]:
         return False, str(e)[:400]
 
 
+def _mcp_platform_detail(body: dict) -> str | None:
+    """Prefer ink-echo-mcp `platform_detail`; else legacy `instances` x/y."""
+    pd = body.get("platform_detail")
+    if isinstance(pd, str) and pd.strip():
+        return pd.strip()
+    inst = body.get("instances") or {}
+    try:
+        expected = int(inst.get("expected", 1))
+        healthy = int(inst.get("healthy", 0))
+    except (TypeError, ValueError):
+        return None
+    if expected < 1:
+        return None
+    return f"{healthy}/{expected}"
+
+
 async def _check_mcp() -> tuple[bool, str | None, str | None]:
-    """Probe MCP HTTP /health; detail is e.g. 1/1 from JSON instances."""
+    """Probe MCP HTTP /health; detail describes the responding process (pid, mode, port)."""
     url = settings.mcp_health_url.strip()
     if not url:
         return False, "MCP_HEALTH_URL not configured", None
@@ -46,14 +62,18 @@ async def _check_mcp() -> tuple[bool, str | None, str | None]:
             return False, "Invalid JSON", None
         if not body.get("ok"):
             return False, "Health body ok=false", None
+        detail = _mcp_platform_detail(body)
         inst = body.get("instances") or {}
-        expected = int(inst.get("expected", 1))
-        healthy = int(inst.get("healthy", 0))
-        detail = f"{healthy}/{expected}"
-        if expected < 1:
-            return False, "invalid instances.expected", detail
-        if healthy != expected:
-            return False, f"MCP instances {detail}", detail
+        if inst:
+            try:
+                expected = int(inst.get("expected", 1))
+                healthy = int(inst.get("healthy", 0))
+            except (TypeError, ValueError):
+                return False, "Invalid MCP instances in health JSON", detail
+            if expected < 1:
+                return False, "invalid instances.expected", detail
+            if healthy != expected:
+                return False, f"MCP instances {healthy}/{expected}", detail
         return True, None, detail
     except Exception as e:
         msg = str(e).strip()[:400]
@@ -73,10 +93,9 @@ async def _check_mcp() -> tuple[bool, str | None, str | None]:
             )
         ):
             msg = (
-                f"{msg} — ink-echo-mcp must be running: it exposes GET /health on 127.0.0.1:3033 by default "
-                "(INK_ECHO_MCP_HEALTH_PORT; set to 0 to disable HTTP). "
-                "Start e.g. `npm run build:mcp && node apps/mcp-server/dist/index.js` or via Cursor MCP; "
-                "`scripts/dev-all.sh` does not start MCP."
+                f"{msg} — ink-echo-mcp must expose GET /health (default 127.0.0.1:3033, INK_ECHO_MCP_HEALTH_PORT; "
+                "0 disables HTTP). Start e.g. `./scripts/dev-all.sh` (health-only on :3033), or "
+                "`npm run build:mcp && node apps/mcp-server/dist/index.js`, or Cursor MCP (often INK_ECHO_MCP_HEALTH_PORT=0)."
             )[:600]
         return False, msg, None
 

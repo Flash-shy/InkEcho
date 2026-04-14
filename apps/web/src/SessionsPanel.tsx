@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 
+import { startMeetingMinutes } from "./inkecho";
 import { formatSegmentMeta, type TranscriptSegmentRow } from "./transcriptFormat";
 import type { SessionSummaryState } from "./sessionSummary";
 
@@ -16,6 +17,9 @@ type SessionDetail = SessionListItem & {
   summary_text?: string | null;
   summary_error?: string | null;
   summary_status?: string;
+  minutes_text?: string | null;
+  minutes_error?: string | null;
+  minutes_status?: string;
   segments: TranscriptSegmentRow[];
 };
 
@@ -28,6 +32,18 @@ type Props = {
 function scrollToSummarySessions(sessionId: string): void {
   const run = () => {
     const el = document.getElementById(`summary-sessions-${sessionId}`);
+    if (el) {
+      el.scrollIntoView({ behavior: "smooth", block: "start", inline: "nearest" });
+      el.classList.add("transcript-block-targeted");
+      window.setTimeout(() => el.classList.remove("transcript-block-targeted"), 1800);
+    }
+  };
+  requestAnimationFrame(() => requestAnimationFrame(run));
+}
+
+function scrollToMinutesSessions(sessionId: string): void {
+  const run = () => {
+    const el = document.getElementById(`minutes-sessions-${sessionId}`);
     if (el) {
       el.scrollIntoView({ behavior: "smooth", block: "start", inline: "nearest" });
       el.classList.add("transcript-block-targeted");
@@ -109,6 +125,9 @@ export function SessionsPanel({ active, sessionSummaries, mergeSessionSummary }:
           summary_status: row.summary_status ?? "idle",
           summary_text: row.summary_text,
           summary_error: row.summary_error,
+          minutes_status: row.minutes_status ?? "idle",
+          minutes_text: row.minutes_text,
+          minutes_error: row.minutes_error,
         });
       } catch (e) {
         setDetail(null);
@@ -143,6 +162,9 @@ export function SessionsPanel({ active, sessionSummaries, mergeSessionSummary }:
             summary_status: st,
             summary_text: s.summary_text,
             summary_error: s.summary_error,
+            minutes_status: s.minutes_status ?? "idle",
+            minutes_text: s.minutes_text,
+            minutes_error: s.minutes_error,
           });
           if (st === "ready" || st === "error") {
             void refreshList();
@@ -169,6 +191,9 @@ export function SessionsPanel({ active, sessionSummaries, mergeSessionSummary }:
               summary_status: "ready",
               summary_text: s.summary_text,
               summary_error: s.summary_error,
+              minutes_status: s.minutes_status ?? "idle",
+              minutes_text: s.minutes_text,
+              minutes_error: s.minutes_error,
             });
             scrollToSummarySessions(sessionId);
             return;
@@ -203,20 +228,108 @@ export function SessionsPanel({ active, sessionSummaries, mergeSessionSummary }:
     [mergeSessionSummary, pollSummaryUntilDone],
   );
 
+  const pollMinutesUntilDone = useCallback(
+    (sessionId: string) => {
+      const started = Date.now();
+      const tick = async () => {
+        if (Date.now() - started > 120_000) {
+          mergeSessionSummary(sessionId, {
+            minutes_status: "error",
+            minutes_error: "Meeting minutes timed out — check backend and AI-API logs.",
+          });
+          return;
+        }
+        try {
+          const r = await fetch(`/api/sessions/${sessionId}`);
+          if (!r.ok) {
+            window.setTimeout(tick, 450);
+            return;
+          }
+          const s = (await r.json()) as SessionDetail;
+          const st = s.minutes_status ?? "idle";
+          mergeSessionSummary(sessionId, {
+            summary_status: s.summary_status ?? "idle",
+            summary_text: s.summary_text,
+            summary_error: s.summary_error,
+            minutes_status: st,
+            minutes_text: s.minutes_text,
+            minutes_error: s.minutes_error,
+          });
+          if (st === "ready" || st === "error") {
+            void refreshList();
+            return;
+          }
+        } catch {
+          /* continue */
+        }
+        window.setTimeout(tick, 450);
+      };
+      void tick();
+    },
+    [mergeSessionSummary, refreshList],
+  );
+
+  const onMeetingMinutes = useCallback(
+    async (sessionId: string) => {
+      try {
+        const gr = await fetch(`/api/sessions/${sessionId}`);
+        if (gr.ok) {
+          const s = (await gr.json()) as SessionDetail;
+          if (s.minutes_status === "ready" && s.minutes_text?.trim()) {
+            mergeSessionSummary(sessionId, {
+              minutes_status: "ready",
+              minutes_text: s.minutes_text,
+              minutes_error: s.minutes_error,
+              summary_status: s.summary_status ?? "idle",
+              summary_text: s.summary_text,
+              summary_error: s.summary_error,
+            });
+            scrollToMinutesSessions(sessionId);
+            return;
+          }
+        }
+      } catch {
+        /* POST */
+      }
+
+      mergeSessionSummary(sessionId, {
+        minutes_status: "running",
+        minutes_error: undefined,
+      });
+      try {
+        await startMeetingMinutes(sessionId);
+        pollMinutesUntilDone(sessionId);
+      } catch (e) {
+        mergeSessionSummary(sessionId, {
+          minutes_status: "error",
+          minutes_error: e instanceof Error ? e.message : "Meeting minutes request failed",
+        });
+      }
+    },
+    [mergeSessionSummary, pollMinutesUntilDone],
+  );
+
   const mergedSummary: SessionSummaryState | null = detail
     ? {
         summary_status:
           sessionSummaries[detail.id]?.summary_status ?? detail.summary_status ?? "idle",
         summary_text: sessionSummaries[detail.id]?.summary_text ?? detail.summary_text,
         summary_error: sessionSummaries[detail.id]?.summary_error ?? detail.summary_error,
+        minutes_status: sessionSummaries[detail.id]?.minutes_status ?? detail.minutes_status ?? "idle",
+        minutes_text: sessionSummaries[detail.id]?.minutes_text ?? detail.minutes_text,
+        minutes_error: sessionSummaries[detail.id]?.minutes_error ?? detail.minutes_error,
       }
     : null;
 
   const sumStatus = mergedSummary?.summary_status ?? "idle";
   const summarizing = sumStatus === "running";
+  const minStatus = mergedSummary?.minutes_status ?? "idle";
+  const minutesRunning = minStatus === "running";
   const segs = detail?.segments ?? [];
   const canSummarize = detail?.status === "ready" && segs.length > 0;
   const hasSummary = sumStatus === "ready" && Boolean(mergedSummary?.summary_text?.trim());
+  const hasMinutes = minStatus === "ready" && Boolean(mergedSummary?.minutes_text?.trim());
+  const aiBusy = summarizing || minutesRunning;
 
   return (
     <div className="sessions-panel">
@@ -309,8 +422,26 @@ export function SessionsPanel({ active, sessionSummaries, mergeSessionSummary }:
                 </button>
                 <button
                   type="button"
+                  className={`btn btn-small ${hasMinutes ? "btn-secondary" : "btn-primary"}`}
+                  disabled={!canSummarize || minutesRunning}
+                  title={
+                    !canSummarize
+                      ? "Need status ready and at least one segment"
+                      : hasMinutes
+                        ? "Scroll to meeting minutes (no API call)."
+                        : "Topics, decisions, open questions, action items."
+                  }
+                  onClick={() => {
+                    if (hasMinutes) scrollToMinutesSessions(detail.id);
+                    else void onMeetingMinutes(detail.id);
+                  }}
+                >
+                  {minutesRunning ? "Minutes…" : hasMinutes ? "View minutes" : "Meeting minutes"}
+                </button>
+                <button
+                  type="button"
                   className="btn btn-small"
-                  disabled={summarizing}
+                  disabled={aiBusy}
                   onClick={() => void downloadExport(detail.id, "md")}
                 >
                   Export .md
@@ -318,7 +449,7 @@ export function SessionsPanel({ active, sessionSummaries, mergeSessionSummary }:
                 <button
                   type="button"
                   className="btn btn-small"
-                  disabled={summarizing}
+                  disabled={aiBusy}
                   onClick={() => void downloadExport(detail.id, "txt")}
                 >
                   Export .txt
@@ -326,7 +457,7 @@ export function SessionsPanel({ active, sessionSummaries, mergeSessionSummary }:
                 <button
                   type="button"
                   className="btn btn-small"
-                  disabled={summarizing}
+                  disabled={aiBusy}
                   onClick={() => void downloadExport(detail.id, "json")}
                 >
                   Export .json
@@ -342,6 +473,17 @@ export function SessionsPanel({ active, sessionSummaries, mergeSessionSummary }:
                 <div className="summary-block" id={`summary-sessions-${detail.id}`}>
                   <h4 className="summary-h">Summary</h4>
                   <pre className="summary-pre">{mergedSummary.summary_text}</pre>
+                </div>
+              )}
+              {mergedSummary?.minutes_error && (
+                <div className="banner-err" role="alert">
+                  {mergedSummary.minutes_error}
+                </div>
+              )}
+              {mergedSummary?.minutes_text && minStatus === "ready" && (
+                <div className="summary-block minutes-block" id={`minutes-sessions-${detail.id}`}>
+                  <h4 className="summary-h">Meeting minutes</h4>
+                  <pre className="summary-pre">{mergedSummary.minutes_text}</pre>
                 </div>
               )}
 

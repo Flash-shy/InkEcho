@@ -58,6 +58,12 @@ def _migrate_sessions_summary_columns(sync_conn) -> None:
         alters.append("ALTER TABLE sessions ADD COLUMN summary_error TEXT")
     if "summary_status" not in cols:
         alters.append("ALTER TABLE sessions ADD COLUMN summary_status VARCHAR(32) DEFAULT 'idle'")
+    if "minutes_text" not in cols:
+        alters.append("ALTER TABLE sessions ADD COLUMN minutes_text TEXT")
+    if "minutes_error" not in cols:
+        alters.append("ALTER TABLE sessions ADD COLUMN minutes_error TEXT")
+    if "minutes_status" not in cols:
+        alters.append("ALTER TABLE sessions ADD COLUMN minutes_status VARCHAR(32) DEFAULT 'idle'")
     for stmt in alters:
         sync_conn.execute(text(stmt))
 

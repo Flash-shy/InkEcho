@@ -27,6 +27,9 @@ class SessionOut(BaseModel):
     summary_text: str | None = None
     summary_error: str | None = None
     summary_status: str = "idle"
+    minutes_text: str | None = None
+    minutes_error: str | None = None
+    minutes_status: str = "idle"
     created_at: datetime
     updated_at: datetime
     segments: list[TranscriptSegmentOut] = []

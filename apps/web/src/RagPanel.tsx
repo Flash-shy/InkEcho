@@ -1,26 +1,9 @@
 import { useCallback, useEffect, useState } from "react";
 
+import { ragAnswer, reindexSessionForRag, semanticSearch } from "./inkecho";
+import type { RagAnswerResponse, RagSearchResponse } from "./inkecho";
+
 type SessionPick = { id: string; title: string | null; status: string };
-
-type RagHit = {
-  session_id: string;
-  session_title: string | null;
-  chunk_index: number;
-  score: number;
-  text: string;
-  segment_start_seq: number;
-  segment_end_seq: number;
-};
-
-type RagSearchResponse = {
-  model: string;
-  hits: RagHit[];
-};
-
-type RagAnswerResponse = {
-  answer: string;
-  citations: RagHit[];
-};
 
 type Props = {
   active: boolean;
@@ -82,17 +65,12 @@ export function RagPanel({ active }: Props) {
     setSearchErr(null);
     setSearchOut(null);
     try {
-      const r = await fetch("/api/rag/search", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          query: q,
-          limit: Math.min(50, Math.max(1, searchLimit)),
-          session_ids: sessionIdsPayload,
-        }),
+      const out = await semanticSearch({
+        query: q,
+        limit: searchLimit,
+        sessionIds: sessionIdsPayload,
       });
-      if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
-      setSearchOut((await r.json()) as RagSearchResponse);
+      setSearchOut(out);
     } catch (e) {
       setSearchErr(e instanceof Error ? e.message : "Search failed");
     } finally {
@@ -107,17 +85,12 @@ export function RagPanel({ active }: Props) {
     setAnswerErr(null);
     setAnswerOut(null);
     try {
-      const r = await fetch("/api/rag/answer", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          question: q,
-          limit: Math.min(20, Math.max(1, answerLimit)),
-          session_ids: sessionIdsPayload,
-        }),
+      const out = await ragAnswer({
+        question: q,
+        limit: answerLimit,
+        sessionIds: sessionIdsPayload,
       });
-      if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
-      setAnswerOut((await r.json()) as RagAnswerResponse);
+      setAnswerOut(out);
     } catch (e) {
       setAnswerErr(e instanceof Error ? e.message : "Answer failed");
     } finally {
@@ -129,10 +102,7 @@ export function RagPanel({ active }: Props) {
     setReindexBusy(sessionId);
     setReindexMsg(null);
     try {
-      const r = await fetch(`/api/rag/index/${sessionId}`, { method: "POST" });
-      const text = await r.text();
-      if (!r.ok) throw new Error(`${r.status} ${text}`);
-      const body = JSON.parse(text) as { chunks_indexed: number };
+      const body = await reindexSessionForRag(sessionId);
       setReindexMsg(`Indexed ${body.chunks_indexed} chunk(s) for session ${sessionId.slice(0, 8)}…`);
     } catch (e) {
       setReindexMsg(e instanceof Error ? e.message : "Re-index failed");

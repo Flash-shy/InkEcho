@@ -42,6 +42,9 @@ async def build_export_payload(session_id: UUID) -> dict[str, Any] | None:
                 "summary_text": row.summary_text,
                 "summary_status": row.summary_status,
                 "summary_error": row.summary_error,
+                "minutes_text": row.minutes_text,
+                "minutes_status": row.minutes_status,
+                "minutes_error": row.minutes_error,
                 "created_at": row.created_at.isoformat() if row.created_at else None,
                 "updated_at": row.updated_at.isoformat() if row.updated_at else None,
             },
@@ -68,6 +71,10 @@ def export_as_txt(data: dict[str, Any]) -> str:
         lines.append("")
         lines.append("--- Summary ---")
         lines.append(sess["summary_text"])
+    if sess.get("minutes_text"):
+        lines.append("")
+        lines.append("--- Meeting minutes ---")
+        lines.append(sess["minutes_text"])
     return "\n".join(lines).strip() + "\n"
 
 
@@ -89,6 +96,11 @@ def export_as_md(data: dict[str, Any]) -> str:
         parts.append("## Summary")
         parts.append("")
         parts.append(sess["summary_text"])
+        parts.append("")
+    if sess.get("minutes_text"):
+        parts.append("## Meeting minutes")
+        parts.append("")
+        parts.append(sess["minutes_text"])
         parts.append("")
     return "\n".join(parts).strip() + "\n"
 

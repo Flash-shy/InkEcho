@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Start InkEcho HTTP/Web dev processes: backend (8000), ai-api (8001), web (5173).
-# Default: start detached (terminal returns immediately). Use --attach to stay in foreground.
-# MCP uses stdio; see printed instructions.
+# Start InkEcho HTTP/Web dev processes: backend (8000), ai-api (8001), web (5173),
+# plus MCP HTTP /health on 3033 (health-only) so GET /health/platform shows MCP OK.
+# Full stdio MCP for Cursor is still configured separately in the IDE; see printed instructions.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -86,6 +86,14 @@ if [[ ! -f "$ROOT/apps/mcp-server/dist/index.js" ]]; then
   (cd "$ROOT" && npm run build:mcp)
 fi
 
+(
+  cd "$ROOT"
+  export INK_ECHO_MCP_MODE=health-only
+  export INK_ECHO_MCP_HEALTH_PORT=3033
+  exec node apps/mcp-server/dist/index.js
+) >>"$LOG_DIR/mcp-health.log" 2>&1 &
+PIDS+=($!)
+
 printf '%s\n' "${PIDS[@]}" >"$LOG_DIR/dev-all.pids"
 
 echo ""
@@ -93,14 +101,18 @@ echo "InkEcho dev (PIDs ${PIDS[*]}) — logs: $LOG_DIR"
 echo "  Backend   http://127.0.0.1:8000/health"
 echo "  AI-API    http://127.0.0.1:8001/health"
 echo "  Web       http://127.0.0.1:5173/"
+echo "  MCP /health (platform only)  http://127.0.0.1:3033/health"
 echo ""
-echo "MCP server (stdio + optional HTTP health): not started here."
-echo "  Cursor / MCP client (health on :3033 by default for /health/platform):"
-echo "    INK_ECHO_MCP_HEALTH_PORT=3033 node $ROOT/apps/mcp-server/dist/index.js"
-echo "  Or watch mode in another terminal:"
-echo "    cd $ROOT && npm run dev:mcp"
+echo "Bundled Agent Skills (not in Cursor Settings → Skills): under apps/mcp-server/skills/"
+echo "  • cross-session-retrieval-answer  • meeting-minutes"
+echo "  In chat, use InkEcho MCP tools list_skills / get_skill, or semantic_search / rag_answer / generate_meeting_minutes."
 echo ""
-echo "Tail logs: tail -f $LOG_DIR/backend.log $LOG_DIR/ai-api.log $LOG_DIR/web.log"
+echo "Cursor MCP (full stdio tools): add ink-echo-mcp in Cursor; if port 3033 is in use by dev-all, set in that config:"
+echo "  INK_ECHO_MCP_HEALTH_PORT=0"
+echo "  Or stop dev-all’s health process and run one combined process:"
+echo "    node $ROOT/apps/mcp-server/dist/index.js"
+echo ""
+echo "Tail logs: tail -f $LOG_DIR/backend.log $LOG_DIR/ai-api.log $LOG_DIR/web.log $LOG_DIR/mcp-health.log"
 echo "Stop all:  $ROOT/scripts/stop-all.sh"
 echo ""
 

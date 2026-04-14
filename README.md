@@ -183,13 +183,13 @@ Summaries use the same **OpenAI-compatible** `chat/completions` stack as above, 
 
 Logs: `logs/backend.log`, `logs/ai-api.log`, `logs/web.log`. If startup fails, check those files. **Docker Desktop** or other tools sometimes bind **8000**; either stop that container or change the backend port in code and env.
 
-MCP uses **stdio**; the script prints the `node …/dist/index.js` command for Cursor (or run `npm run dev:mcp` in another terminal). See script header comments.
+`scripts/dev-all.sh` starts **MCP in `INK_ECHO_MCP_MODE=health-only`** on **:3033** so the web **Platform** menu can show MCP OK; that process does **not** expose stdio tools. For **Cursor** agents (`list_skills`, `get_skill`, `semantic_search`, `generate_meeting_minutes`, …), add **ink-echo-mcp** in Cursor MCP settings and set **`INK_ECHO_MCP_HEALTH_PORT=0`** if **3033** is already taken by dev-all. Bundled skills are **not** listed under Cursor **Settings → Skills**; they live in `apps/mcp-server/skills/` and are read via **`list_skills`** / **`get_skill`**.
 
 1. **Infra (optional):** `docker compose up -d` for Postgres (`5432`) and MinIO if you want them. The backend **defaults to SQLite** under `apps/backend/data/` so you can run without Docker; set `DATABASE_URL` to a `postgresql://…` URL when using Compose Postgres.
 2. **Backend** (`apps/backend`): `python3 -m venv .venv && source .venv/bin/activate && pip install -r requirements.txt`, then `uvicorn app.main:app --reload --host 127.0.0.1 --port 8000`. Settings read from the environment; you can place a `.env` in `apps/backend/` or export vars from the root `.env` (see `.env.example`).
 3. **AI-API** (`apps/ai-api`): same pattern, `uvicorn app.main:app --reload --host 127.0.0.1 --port 8001`.
-4. **Web** (`apps/web`): from repo root, `npm install` then `npm run dev:web` (uses `apps/web/vite.config.ts` so the root is always `apps/web`, even from the monorepo root). The dev server proxies `/api` → backend (default `http://127.0.0.1:8000`); open **http://127.0.0.1:5173/**. Alternative: `cd apps/web && npm run dev`.
-5. **MCP server** (`apps/mcp-server`): stdio for MCP clients, plus **optional** HTTP **`GET /health`** on `127.0.0.1` (default port **3033**, override with `INK_ECHO_MCP_HEALTH_PORT`; set to `0` to disable). The web app’s **Platform** status uses the backend’s `GET /health/platform`, which probes **Web frontend**, **AI-API**, **MCP /health** (expects JSON `instances: { expected, healthy }`, e.g. `1/1`), and treats **Backend** as up when this route runs. Run e.g. `INK_ECHO_MCP_HEALTH_PORT=3033 node apps/mcp-server/dist/index.js` or `npm run dev:mcp` (set the env in your shell or MCP host config). Bundled skills live under `apps/mcp-server/skills/`. Override the directory with `INK_ECHO_SKILLS_DIR` if needed.
+4. **Web** (`apps/web`): from repo root, `npm install` then `npm run dev:web` (uses `apps/web/vite.config.ts` so the root is always `apps/web`, even from the monorepo root). The dev server proxies `/api` → backend (default `http://127.0.0.1:8000`); open **http://127.0.0.1:5173/**. Alternative: `cd apps/web && npm run dev`. Meeting minutes and cross-session RAG calls are centralized in **`apps/web/src/inkecho/`** (`startMeetingMinutes`, `semanticSearch`, `ragAnswer`, …) so the UI matches the same backend routes MCP tools use.
+5. **MCP server** (`apps/mcp-server`): stdio for MCP clients, plus **optional** HTTP **`GET /health`** on `127.0.0.1` (default port **3033**, override with `INK_ECHO_MCP_HEALTH_PORT`; set to `0` to disable). The web app’s **Platform** status uses the backend’s `GET /health/platform`, which probes **Web frontend**, **AI-API**, **MCP /health** (JSON `ok`, plus **`platform_detail`** describing the responding process: pid, mode, HTTP port, stdio). Legacy **`instances: { expected, healthy }`** is still accepted if present. Run e.g. `INK_ECHO_MCP_HEALTH_PORT=3033 node apps/mcp-server/dist/index.js` or `npm run dev:mcp` (set the env in your shell or MCP host config). Bundled skills live under `apps/mcp-server/skills/`. Override the directory with `INK_ECHO_SKILLS_DIR` if needed.
 
 Root **npm** workspaces: `@ink-echo/web` and `@ink-echo/mcp-server`. Python apps keep their own `requirements.txt`.
 
@@ -224,20 +224,10 @@ Inspector may recommend **Node 22+**; if the UI fails to start, upgrade Node or 
 ### B. Cursor
 
 1. Run `npm run build:mcp` so `apps/mcp-server/dist/index.js` exists.
-2. In Cursor MCP settings, add a server (paths vary by Cursor version), for example:
+2. **Project config (recommended):** this repo includes **`.cursor/mcp.json`** — it runs the MCP server with `cwd` at the repo root, **`INK_ECHO_MCP_HEALTH_PORT=0`** (avoids clashing with `dev-all.sh`, which uses **3033** for Platform health-only), and **`INK_ECHO_BACKEND_URL=http://127.0.0.1:8000`**. **Restart Cursor** after pulling or editing MCP config.
+3. Alternatively, add the same server under **Settings → MCP** using an absolute path in `args` if your Cursor build ignores `cwd` / `${workspaceFolder}`.
 
-```json
-{
-  "mcpServers": {
-    "ink-echo": {
-      "command": "node",
-      "args": ["/absolute/path/to/InkEcho/apps/mcp-server/dist/index.js"]
-    }
-  }
-}
-```
-
-Optional env: `INK_ECHO_SKILLS_DIR` to point at a custom skills directory.
+Optional env: `INK_ECHO_SKILLS_DIR` to point at a custom skills directory; `INK_ECHO_MCP_BACKEND_TOKEN` when the backend requires Bearer auth.
 
 ### C. Backend dependency
 

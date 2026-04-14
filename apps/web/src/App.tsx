@@ -32,7 +32,7 @@ export default function App() {
 
   const mergeSessionSummary = useCallback((sessionId: string, patch: Partial<SessionSummaryState>) => {
     setSessionSummaries((prev) => {
-      const base = prev[sessionId] ?? { summary_status: "idle" };
+      const base = prev[sessionId] ?? { summary_status: "idle", minutes_status: "idle" };
       return { ...prev, [sessionId]: { ...base, ...patch } };
     });
   }, []);

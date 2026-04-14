@@ -153,6 +153,15 @@ Monorepo **scaffold** is in place: `apps/web`, `apps/backend`, `apps/ai-api`, `a
 
 ## Local development (scaffold)
 
+**One-shot (three HTTP/Web processes + MCP instructions):** from the repo root,
+
+```bash
+./scripts/dev-all.sh # backend + ai-api + web (logs in ./logs/)
+./scripts/dev-all.sh --docker # same, after docker compose up -d
+```
+
+MCP uses **stdio**; the script prints the `node …/dist/index.js` command for Cursor (or run `npm run dev:mcp` in another terminal). See script header comments.
+
 1. **Infra (optional for hello-world):** from the repo root, `cp .env.example .env` and run `docker compose up -d` for Postgres (`5432`) and MinIO (`9000` / console `9001`).
 2. **Backend** (`apps/backend`): `python3 -m venv .venv && source .venv/bin/activate && pip install -r requirements.txt`, then `uvicorn app.main:app --reload --host 127.0.0.1 --port 8000`. Settings read from the environment; you can place a `.env` in `apps/backend/` or export vars from the root `.env` (see `.env.example`).
 3. **AI-API** (`apps/ai-api`): same pattern, `uvicorn app.main:app --reload --host 127.0.0.1 --port 8001`.

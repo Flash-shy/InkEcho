@@ -27,3 +27,4 @@ apps/mcp-server/dist/
 # Logs
 *.log
 npm-debug.log*
+logs/

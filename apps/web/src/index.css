@@ -30,7 +30,7 @@ body {
 }
 
 #root {
-  max-width: 52rem;
+  max-width: 56rem;
   margin: 0 auto;
   padding: 2.5rem 1.25rem 3rem;
 }
@@ -66,14 +66,14 @@ code {
   max-width: 36ch;
 }
 
-.pill-row {
+.tablist {
   display: flex;
   flex-wrap: wrap;
   gap: 0.5rem;
   margin-top: 1.25rem;
 }
 
-.pill {
+.tab-pill {
   font-size: 0.78rem;
   font-weight: 600;
   letter-spacing: 0.04em;
@@ -81,8 +81,27 @@ code {
   color: var(--ink-muted);
   background: var(--surface-elevated);
   border: 1px solid var(--border);
-  padding: 0.35rem 0.65rem;
+  padding: 0.4rem 0.85rem;
   border-radius: 999px;
+  cursor: pointer;
+  font-family: inherit;
+  transition: border-color 0.15s ease, color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.tab-pill:hover {
+  border-color: rgba(26, 31, 46, 0.2);
+  color: var(--ink);
+}
+
+.tab-pill:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.tab-pill-active {
+  color: var(--ink);
+  border-color: rgba(196, 92, 62, 0.45);
+  box-shadow: 0 0 0 3px var(--accent-soft);
 }
 
 .card {
@@ -101,6 +120,292 @@ code {
   letter-spacing: 0.06em;
   text-transform: uppercase;
   color: var(--ink-muted);
+}
+
+.workflow-card .workflow-title {
+  margin: 0 0 1rem;
+  font-size: 0.82rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-muted);
+}
+
+.workflow-copy {
+  margin: 0 0 0.85rem;
+  font-size: 0.98rem;
+}
+
+.workflow-list {
+  margin: 0;
+  padding-left: 1.15rem;
+  font-size: 0.95rem;
+}
+
+.workflow-list li {
+  margin-bottom: 0.35rem;
+}
+
+.details-platform {
+  background: var(--surface-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 0.35rem 1rem 0.85rem;
+  margin-bottom: 1.5rem;
+  box-shadow: var(--shadow);
+}
+
+.details-platform summary {
+  cursor: pointer;
+  font-size: 0.82rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-muted);
+  padding: 0.5rem 0;
+  list-style: none;
+}
+
+.details-platform summary::-webkit-details-marker {
+  display: none;
+}
+
+.details-platform summary::before {
+  content: "";
+  display: inline-block;
+  width: 0.35rem;
+  height: 0.35rem;
+  margin-right: 0.45rem;
+  border-right: 2px solid var(--ink-muted);
+  border-bottom: 2px solid var(--ink-muted);
+  transform: rotate(-45deg) translateY(-0.05rem);
+  transition: transform 0.15s ease;
+}
+
+.details-platform[open] summary::before {
+  transform: rotate(45deg) translateY(-0.05rem);
+}
+
+.details-platform .status-loading,
+.details-platform .status-ok,
+.details-platform .status-err {
+  margin-top: 0.25rem;
+}
+
+.listen-lead {
+  margin: 0 0 1rem;
+  font-size: 0.95rem;
+  max-width: 62ch;
+}
+
+.listen-lead strong {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.listen-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  margin-bottom: 1rem;
+}
+
+.btn {
+  font-family: inherit;
+  font-size: 0.9rem;
+  font-weight: 600;
+  padding: 0.5rem 0.95rem;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--surface-elevated);
+  color: var(--ink);
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.btn:hover:not(:disabled) {
+  border-color: rgba(26, 31, 46, 0.18);
+  box-shadow: 0 1px 2px rgba(26, 31, 46, 0.06);
+}
+
+.btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.btn-primary {
+  background: var(--accent);
+  border-color: rgba(196, 92, 62, 0.35);
+  color: #fff;
+}
+
+.btn-primary:hover:not(:disabled) {
+  filter: brightness(1.03);
+}
+
+.btn-danger {
+  background: rgba(196, 92, 62, 0.12);
+  border-color: rgba(196, 92, 62, 0.35);
+  color: #8b3d2e;
+}
+
+.btn-danger:hover:not(:disabled) {
+  background: rgba(196, 92, 62, 0.18);
+}
+
+.btn-ghost {
+  display: inline-block;
+}
+
+.banner-err {
+  background: rgba(196, 92, 62, 0.08);
+  border: 1px solid rgba(196, 92, 62, 0.25);
+  color: #8b3d2e;
+  padding: 0.75rem 0.9rem;
+  border-radius: 10px;
+  font-size: 0.92rem;
+  margin-bottom: 1rem;
+}
+
+.rec-status {
+  margin-bottom: 1rem;
+}
+
+.rec-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.45rem;
+}
+
+.rec-dot {
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 50%;
+  background: #c45c3e;
+  animation: pulse-dot 1.2s ease-in-out infinite;
+}
+
+@keyframes pulse-dot {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
+.rec-time {
+  font-variant-numeric: tabular-nums;
+  font-weight: 650;
+  font-size: 1.05rem;
+}
+
+.level-wrap {
+  height: 4px;
+  background: rgba(26, 31, 46, 0.08);
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.level-bar {
+  height: 100%;
+  width: 100%;
+  background: linear-gradient(90deg, rgba(196, 92, 62, 0.45), var(--accent));
+  border-radius: 999px;
+  transform-origin: left center;
+  transition: transform 0.08s linear;
+}
+
+.card-inner {
+  background: rgba(26, 31, 46, 0.03);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 1rem;
+  margin-bottom: 1.25rem;
+}
+
+.rec-result-head {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  margin-bottom: 0.65rem;
+}
+
+.rec-result-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+}
+
+.audio-preview {
+  width: 100%;
+  max-height: 3.5rem;
+}
+
+.listen-subh {
+  margin: 0 0 0.5rem;
+  font-size: 0.82rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--ink-muted);
+}
+
+.upload-block {
+  margin-top: 0.25rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--border);
+}
+
+.file-label {
+  display: inline-block;
+  cursor: pointer;
+}
+
+.file-input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.upload-preview {
+  margin-top: 0.85rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.upload-preview-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.5rem 0.75rem;
+}
+
+.upload-file-meta {
+  flex: 1;
+  min-width: 12rem;
+}
+
+.btn-small {
+  font-size: 0.82rem;
+  padding: 0.35rem 0.7rem;
+  flex-shrink: 0;
 }
 
 .status-loading {

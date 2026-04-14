@@ -28,3 +28,6 @@ apps/mcp-server/dist/
 *.log
 npm-debug.log*
 logs/
+
+# Local SQLite (backend dev default)
+apps/backend/data/

@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type ChangeEvent } from "react";
 
+import { type CaptureKind, captureKindMeta } from "./captureTypes";
+
 type RecordPhase = "idle" | "recording" | "stopped";
 
 /** Audio-only containers cannot record display-capture streams that include a video track — pick video MIME first. */
@@ -28,7 +30,59 @@ function formatHms(totalSeconds: number): string {
   return h > 0 ? `${h}:${pad(m)}:${pad(sec)}` : `${m}:${pad(sec)}`;
 }
 
-export function ListenPanel() {
+/**
+ * Mix tab/screen capture audio with microphone into one track for MediaRecorder.
+ * Returns null if there is no audio at all.
+ */
+function buildMixedDisplayAndMic(
+  displayStream: MediaStream,
+  micStream: MediaStream | null,
+): { stream: MediaStream; cleanup: () => void } | null {
+  const ctx = new AudioContext();
+  const dest = ctx.createMediaStreamDestination();
+  const videoTracks = displayStream.getVideoTracks();
+  const displayAudio = displayStream.getAudioTracks();
+
+  if (displayAudio.length > 0) {
+    const src = ctx.createMediaStreamSource(new MediaStream(displayAudio));
+    src.connect(dest);
+  }
+  if (micStream) {
+    const src = ctx.createMediaStreamSource(micStream);
+    src.connect(dest);
+  }
+
+  const mixedAudio = dest.stream.getAudioTracks();
+  if (mixedAudio.length === 0) {
+    void ctx.close();
+    displayStream.getTracks().forEach((t) => t.stop());
+    micStream?.getTracks().forEach((t) => t.stop());
+    return null;
+  }
+
+  const out = new MediaStream([...videoTracks, ...mixedAudio]);
+  void ctx.resume().catch(() => {});
+
+  const cleanup = () => {
+    displayStream.getTracks().forEach((t) => t.stop());
+    micStream?.getTracks().forEach((t) => t.stop());
+    void ctx.close();
+  };
+
+  return { stream: out, cleanup };
+}
+
+export type ClipReadyOptions = {
+  /** When false, clip is only enqueued (e.g. auto-save before another capture); stay on Listen. Default: switch to Transcribe. */
+  focusTranscribe?: boolean;
+  captureKind?: CaptureKind;
+};
+
+type ListenPanelProps = {
+  onClipReady?: (blob: Blob, label: string, options?: ClipReadyOptions) => void;
+};
+
+export function ListenPanel({ onClipReady }: ListenPanelProps) {
   const [phase, setPhase] = useState<RecordPhase>("idle");
   const [error, setError] = useState<string | null>(null);
   const [elapsedSec, setElapsedSec] = useState(0);
@@ -36,10 +90,17 @@ export function ListenPanel() {
   const [recordingUrl, setRecordingUrl] = useState<string | null>(null);
   const [recordingBlob, setRecordingBlob] = useState<Blob | null>(null);
   const [recordingLabel, setRecordingLabel] = useState<string | null>(null);
+  const [recordingKind, setRecordingKind] = useState<CaptureKind | null>(null);
   const [uploadFile, setUploadFile] = useState<File | null>(null);
   const [uploadUrl, setUploadUrl] = useState<string | null>(null);
+  const [queueNotice, setQueueNotice] = useState<string | null>(null);
 
   const streamRef = useRef<MediaStream | null>(null);
+  /** Latest finished clip (for auto-queue before starting another capture) */
+  const pendingClipRef = useRef<{ blob: Blob; label: string; captureKind: CaptureKind } | null>(null);
+  /** Stops display + mic + AudioContext when using mixed capture */
+  const cleanupRef = useRef<(() => void) | null>(null);
+  const [mixMicWithTab, setMixMicWithTab] = useState(true);
   const recorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<BlobPart[]>([]);
   const tickRef = useRef<number | null>(null);
@@ -60,7 +121,8 @@ export function ListenPanel() {
   }, []);
 
   const stopStream = useCallback(() => {
-    streamRef.current?.getTracks().forEach((t) => t.stop());
+    cleanupRef.current?.();
+    cleanupRef.current = null;
     streamRef.current = null;
   }, []);
 
@@ -99,6 +161,20 @@ export function ListenPanel() {
     };
   }, [teardownRecording]);
 
+  useEffect(() => {
+    if (phase === "stopped" && recordingBlob && recordingLabel && recordingKind) {
+      pendingClipRef.current = { blob: recordingBlob, label: recordingLabel, captureKind: recordingKind };
+    } else {
+      pendingClipRef.current = null;
+    }
+  }, [phase, recordingBlob, recordingLabel, recordingKind]);
+
+  useEffect(() => {
+    if (!queueNotice) return;
+    const t = window.setTimeout(() => setQueueNotice(null), 6500);
+    return () => window.clearTimeout(t);
+  }, [queueNotice]);
+
   const startMeter = useCallback((stream: MediaStream) => {
     const audioTracks = stream.getAudioTracks();
     if (audioTracks.length === 0) return;
@@ -124,7 +200,7 @@ export function ListenPanel() {
   }, []);
 
   const beginRecorder = useCallback(
-    (stream: MediaStream, label: string) => {
+    (stream: MediaStream, label: string, kind: CaptureKind) => {
       chunksRef.current = [];
       const attempts = recorderMimeAttempts(stream);
       const onData = (e: BlobEvent) => {
@@ -138,6 +214,7 @@ export function ListenPanel() {
           return URL.createObjectURL(blob);
         });
         setRecordingLabel(label);
+        setRecordingKind(kind);
         setPhase("stopped");
         clearTick();
         stopMeter();
@@ -183,67 +260,121 @@ export function ListenPanel() {
     [clearTick, stopMeter, stopStream],
   );
 
-  const onCaptureTab = useCallback(async () => {
-    setError(null);
+  const clearFinishedPreview = useCallback(() => {
     revokeRecordingObjectUrl();
     setRecordingBlob(null);
     setRecordingLabel(null);
+    setRecordingKind(null);
     setPhase("idle");
+    setElapsedSec(0);
+  }, [revokeRecordingObjectUrl]);
+
+  /**
+   * Before starting a new capture: enqueue the current “Clip ready” so it is not lost,
+   * then clear the local preview. Does not switch to Transcribe (stay on Listen).
+   */
+  const replaceFinishedClipForNewCapture = useCallback(() => {
+    const prev = pendingClipRef.current;
+    if (prev && onClipReady) {
+      onClipReady(prev.blob, prev.label, { focusTranscribe: false, captureKind: prev.captureKind });
+      setQueueNotice("Previous clip was added to the transcription queue. Open Transcribe when you want to run STT.");
+    }
+    clearFinishedPreview();
+  }, [onClipReady, clearFinishedPreview]);
+
+  const onCaptureTab = useCallback(async () => {
+    setError(null);
     try {
-      const stream = await navigator.mediaDevices.getDisplayMedia({
+      const displayStream = await navigator.mediaDevices.getDisplayMedia({
         video: true,
         audio: true,
       } as DisplayMediaStreamConstraints);
-      streamRef.current = stream;
-      if (stream.getAudioTracks().length === 0) {
-        setError(
-          "No audio track on this share. In Chromium, pick a tab and enable “Share tab audio”, or try microphone capture.",
-        );
+
+      let recordStream: MediaStream;
+      let label: string;
+
+      if (mixMicWithTab) {
+        let micStream: MediaStream | null = null;
+        try {
+          micStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+        } catch {
+          setError(
+            "Microphone not available; recording tab/screen audio only. Grant mic access or turn off “Also mix in microphone”.",
+          );
+        }
+        const built = buildMixedDisplayAndMic(displayStream, micStream);
+        if (!built) {
+          setError(
+            "No audio to record. Enable “Share tab audio” for a tab, or allow the microphone when mixing is on.",
+          );
+          teardownRecording();
+          setPhase("idle");
+          return;
+        }
+        recordStream = built.stream;
+        cleanupRef.current = built.cleanup;
+        label = "Tab / screen + microphone";
+      } else {
+        recordStream = displayStream;
+        cleanupRef.current = () => displayStream.getTracks().forEach((t) => t.stop());
+        label = "Tab or window capture";
+        if (displayStream.getAudioTracks().length === 0) {
+          setError(
+            "No audio track on this share. In Chromium, pick a tab and enable “Share tab audio”, or turn on “Also mix in microphone”.",
+          );
+        }
       }
-      startMeter(stream);
-      const vt = stream.getVideoTracks()[0];
+
+      replaceFinishedClipForNewCapture();
+      streamRef.current = recordStream;
+      startMeter(recordStream);
+      const vt = recordStream.getVideoTracks()[0];
       vt?.addEventListener("ended", () => {
         if (recorderRef.current && recorderRef.current.state === "recording") recorderRef.current.stop();
       });
-      beginRecorder(stream, "Tab or window capture");
+      beginRecorder(recordStream, label, mixMicWithTab ? "display-mic" : "display");
     } catch (e) {
       const msg = e instanceof Error ? e.message : "Display capture was cancelled or failed.";
       setError(msg);
       teardownRecording();
       setPhase("idle");
     }
-  }, [beginRecorder, revokeRecordingObjectUrl, startMeter, teardownRecording]);
+  }, [beginRecorder, mixMicWithTab, replaceFinishedClipForNewCapture, startMeter, teardownRecording]);
 
   const onMicOnly = useCallback(async () => {
     setError(null);
-    revokeRecordingObjectUrl();
-    setRecordingBlob(null);
-    setRecordingLabel(null);
-    setPhase("idle");
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+      replaceFinishedClipForNewCapture();
       streamRef.current = stream;
+      cleanupRef.current = () => stream.getTracks().forEach((t) => t.stop());
       startMeter(stream);
-      beginRecorder(stream, "Microphone");
+      beginRecorder(stream, "Microphone", "microphone");
     } catch (e) {
       const msg = e instanceof Error ? e.message : "Microphone access was denied or unavailable.";
       setError(msg);
       teardownRecording();
       setPhase("idle");
     }
-  }, [beginRecorder, revokeRecordingObjectUrl, startMeter, teardownRecording]);
+  }, [beginRecorder, replaceFinishedClipForNewCapture, startMeter, teardownRecording]);
 
   const onStop = useCallback(() => {
     if (recorderRef.current && recorderRef.current.state === "recording") recorderRef.current.stop();
   }, []);
 
   const onDiscardRecording = useCallback(() => {
-    revokeRecordingObjectUrl();
-    setRecordingBlob(null);
-    setRecordingLabel(null);
-    setPhase("idle");
-    setElapsedSec(0);
-  }, [revokeRecordingObjectUrl]);
+    clearFinishedPreview();
+  }, [clearFinishedPreview]);
+
+  const onAddRecordingToQueue = useCallback(() => {
+    if (!recordingBlob || !onClipReady || !recordingKind) return;
+    onClipReady(recordingBlob, recordingLabel ?? "Recording", {
+      focusTranscribe: true,
+      captureKind: recordingKind,
+    });
+    setQueueNotice("Added to the transcription queue.");
+    clearFinishedPreview();
+  }, [recordingBlob, recordingLabel, recordingKind, onClipReady, clearFinishedPreview]);
 
   const onDownload = useCallback(() => {
     if (!recordingBlob || !recordingUrl) return;
@@ -254,15 +385,28 @@ export function ListenPanel() {
     a.click();
   }, [recordingBlob, recordingUrl]);
 
-  const onUploadPick = useCallback((e: ChangeEvent<HTMLInputElement>) => {
-    const f = e.target.files?.[0];
-    setUploadFile(f ?? null);
-    setUploadUrl((prev) => {
-      if (prev) URL.revokeObjectURL(prev);
-      return f ? URL.createObjectURL(f) : null;
-    });
-    e.target.value = "";
-  }, []);
+  const onUploadPick = useCallback(
+    (e: ChangeEvent<HTMLInputElement>) => {
+      const list = e.target.files;
+      if (!list?.length) return;
+      if (list.length > 1 && onClipReady) {
+        for (let i = 0; i < list.length; i++) {
+          const f = list.item(i)!;
+          onClipReady(f, f.name, { captureKind: "upload" });
+        }
+        e.target.value = "";
+        return;
+      }
+      const f = list[0];
+      setUploadFile(f);
+      setUploadUrl((prev) => {
+        if (prev) URL.revokeObjectURL(prev);
+        return URL.createObjectURL(f);
+      });
+      e.target.value = "";
+    },
+    [onClipReady],
+  );
 
   const onRemoveUpload = useCallback(() => {
     setUploadUrl((prev) => {
@@ -277,11 +421,18 @@ export function ListenPanel() {
   return (
     <div className="listen">
       <p className="listen-lead muted">
-        Browsers cannot tap system audio directly. Share a <strong>tab</strong> or <strong>window</strong> that plays the
-        meeting audio (enable “share audio” when prompted), use the <strong>microphone</strong>, or{" "}
-        <strong>upload</strong> a file from OBS / QuickTime. Transcription will plug into the backend in the next
-        milestone.
+        Browsers cannot tap system audio directly. Share a <strong>tab</strong> or <strong>window</strong> (enable “share
+        audio” when prompted), optionally <strong>mix in your microphone</strong> below, or use{" "}
+        <strong>microphone only</strong> / <strong>upload</strong>. Starting another capture automatically{" "}
+        <strong>saves the current clip to the transcription queue</strong> so you can record tab first, then mic, etc.
+        Use <strong>Add to transcription queue</strong> to jump to Transcribe after adding.
       </p>
+
+      {queueNotice && (
+        <div className="banner-info" role="status">
+          {queueNotice}
+        </div>
+      )}
 
       {error && (
         <div className="banner-err" role="alert">
@@ -303,6 +454,20 @@ export function ListenPanel() {
         )}
       </div>
 
+      <div className="listen-options">
+        <label className="listen-mix-label">
+          <input
+            type="checkbox"
+            checked={mixMicWithTab}
+            onChange={(e) => setMixMicWithTab(e.target.checked)}
+            disabled={phase === "recording"}
+          />
+          <span>
+            Also mix in microphone with tab/screen capture <span className="muted">(records meeting + your voice)</span>
+          </span>
+        </label>
+      </div>
+
       {phase === "recording" && (
         <div className="rec-status" aria-live="polite">
           <div className="rec-row">
@@ -321,10 +486,23 @@ export function ListenPanel() {
           <div className="rec-result-head">
             <strong>Clip ready</strong>
             <span className="muted">{recordingLabel}</span>
+            {recordingKind && (
+              <span
+                className={`clip-kind-badge clip-kind-${recordingKind}`}
+                title={captureKindMeta(recordingKind).hint}
+              >
+                {captureKindMeta(recordingKind).tag}
+              </span>
+            )}
           </div>
           <audio className="audio-preview" controls src={recordingUrl} />
           <div className="rec-result-actions">
-            <button type="button" className="btn btn-primary" onClick={onDownload}>
+            {onClipReady && recordingBlob && recordingKind && (
+              <button type="button" className="btn btn-primary" onClick={onAddRecordingToQueue}>
+                Add to transcription queue
+              </button>
+            )}
+            <button type="button" className="btn" onClick={onDownload}>
               Download
             </button>
             <button type="button" className="btn" onClick={onDiscardRecording}>
@@ -336,9 +514,10 @@ export function ListenPanel() {
 
       <div className="upload-block">
         <h3 className="listen-subh">Upload a recording</h3>
+        <p className="muted upload-hint">Hold Ctrl/Cmd or Shift to select multiple files.</p>
         <label className="file-label">
-          <input type="file" accept={uploadAccept} onChange={onUploadPick} className="file-input" />
-          <span className="btn btn-ghost">Choose audio or video file</span>
+          <input type="file" accept={uploadAccept} multiple onChange={onUploadPick} className="file-input" />
+          <span className="btn btn-ghost">Choose audio or video file(s)</span>
         </label>
         {uploadFile && uploadUrl && (
           <div className="upload-preview">
@@ -346,9 +525,22 @@ export function ListenPanel() {
               <div className="muted upload-file-meta">
                 <strong>{uploadFile.name}</strong> · {(uploadFile.size / (1024 * 1024)).toFixed(2)} MB
               </div>
-              <button type="button" className="btn btn-danger btn-small" onClick={onRemoveUpload}>
-                Remove file
-              </button>
+              <div className="upload-preview-actions">
+                {onClipReady && (
+                  <button
+                    type="button"
+                    className="btn btn-primary btn-small"
+                    onClick={() =>
+                      onClipReady(uploadFile, uploadFile.name, { captureKind: "upload", focusTranscribe: true })
+                    }
+                  >
+                    Add to transcription queue
+                  </button>
+                )}
+                <button type="button" className="btn btn-danger btn-small" onClick={onRemoveUpload}>
+                  Remove file
+                </button>
+              </div>
             </div>
             <audio className="audio-preview" controls src={uploadUrl} />
           </div>

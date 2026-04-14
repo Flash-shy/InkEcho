@@ -1,14 +1,20 @@
 from contextlib import asynccontextmanager
+from uuid import UUID
 
-from fastapi import FastAPI
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
+from app.db import SessionLocal, init_db
+from app.models import Session as SessionModel
+from app.routers import sessions as sessions_router
+from app.ws_hub import SessionWsHub
 
 
 @asynccontextmanager
-async def lifespan(_: FastAPI):
-    # Future: DB engine, migrations
+async def lifespan(app: FastAPI):
+    app.state.ws_hub = SessionWsHub()
+    await init_db()
     yield
 
 
@@ -23,6 +29,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.include_router(sessions_router.router)
+
 
 @app.get("/health")
 def health():
@@ -35,5 +43,22 @@ def health():
 
 @app.get("/internal/health")
 def internal_health():
-    """Reserved for load balancers / compose healthchecks."""
     return {"status": "ok"}
+
+
+@app.websocket("/ws/sessions/{session_id}")
+async def session_ws(websocket: WebSocket, session_id: UUID):
+    async with SessionLocal() as db:
+        row = await db.get(SessionModel, session_id)
+        if not row:
+            await websocket.close(code=4004, reason="Session not found")
+            return
+    hub: SessionWsHub = websocket.app.state.ws_hub
+    await hub.connect(str(session_id), websocket)
+    try:
+        while True:
+            await websocket.receive_text()
+    except WebSocketDisconnect:
+        pass
+    finally:
+        await hub.disconnect(str(session_id), websocket)

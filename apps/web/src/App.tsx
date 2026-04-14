@@ -1,5 +1,7 @@
 import { useEffect, useId, useState } from "react";
+import { type CaptureKind } from "./captureTypes";
 import { ListenPanel } from "./ListenPanel";
+import { TranscribePanel, type TranscribeClip } from "./TranscribePanel";
 
 type Health = { status: string; service?: string; ai_api_base_url?: string };
 type MainTab = "listen" | "transcribe" | "summarize";
@@ -14,6 +16,7 @@ export default function App() {
   const [health, setHealth] = useState<Health | null>(null);
   const [healthError, setHealthError] = useState<string | null>(null);
   const [healthLoading, setHealthLoading] = useState(true);
+  const [transcribeQueue, setTranscribeQueue] = useState<TranscribeClip[]>([]);
 
   useEffect(() => {
     if (!import.meta.env.DEV) return;
@@ -90,7 +93,15 @@ export default function App() {
           hidden={mainTab !== "listen"}
         >
           <h2 className="workflow-title">Listen</h2>
-          <ListenPanel />
+          <ListenPanel
+            onClipReady={(blob, label, options) => {
+              const captureKind: CaptureKind = options?.captureKind ?? "upload";
+              setTranscribeQueue((q) => [...q, { id: crypto.randomUUID(), blob, label, captureKind }]);
+              if (options?.focusTranscribe !== false) {
+                setMainTab("transcribe");
+              }
+            }}
+          />
         </div>
         <div
           id={transcribePanelId}
@@ -99,17 +110,11 @@ export default function App() {
           hidden={mainTab !== "transcribe"}
         >
           <h2 className="workflow-title">Transcribe</h2>
-          <p className="muted workflow-copy">
-            Streaming speech-to-text will run through the <strong>backend</strong> and <strong>AI-API</strong> (not from
-            the browser), with partial segments pushed over WebSocket. This milestone wires the <strong>Listen</strong>{" "}
-            path first; hooking MediaRecorder output and uploads to STT is the next backend step.
-          </p>
-          <ul className="workflow-list muted">
-            <li>
-              Record or upload a clip in <strong>Listen</strong>, then you will send it to a session here.
-            </li>
-            <li>Live tab capture: choose a tab and enable “share audio” when the browser prompts.</li>
-          </ul>
+          <TranscribePanel
+            clips={transcribeQueue}
+            onRemoveClip={(id) => setTranscribeQueue((q) => q.filter((c) => c.id !== id))}
+            onClearQueue={() => setTranscribeQueue([])}
+          />
         </div>
         <div
           id={summarizePanelId}

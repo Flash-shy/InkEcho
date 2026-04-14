@@ -149,7 +149,7 @@ The MCP server ships a **bundled skill tree** (Cursor-style: `apps/mcp-server/sk
 
 ## Status
 
-Monorepo **scaffold** is in place: `apps/web`, `apps/backend`, `apps/ai-api`, `apps/mcp-server`, plus Docker Compose for Postgres and MinIO. Session/STT/WebSocket work is **not** implemented yet (next roadmap steps).
+Monorepo **scaffold** is in place: `apps/web`, `apps/backend`, `apps/ai-api`, `apps/mcp-server`, plus Docker Compose for Postgres and MinIO. **MVP slice in progress**: backend **sessions** (Postgres), **audio upload** → **AI-API** `/v1/transcribe` (mock or OpenAI Whisper when `OPENAI_API_KEY` is set), **WebSocket** segment fan-out, and web **Transcribe** tab wired to that flow. **Next**: summary jobs, exports (MD/TXT/JSON), and MCP tools calling the real backend API.
 
 ## Local development (scaffold)
 
@@ -168,7 +168,7 @@ Logs: `logs/backend.log`, `logs/ai-api.log`, `logs/web.log`. If startup fails, c
 
 MCP uses **stdio**; the script prints the `node …/dist/index.js` command for Cursor (or run `npm run dev:mcp` in another terminal). See script header comments.
 
-1. **Infra (optional for hello-world):** from the repo root, `cp .env.example .env` and run `docker compose up -d` for Postgres (`5432`) and MinIO (`9000` / console `9001`).
+1. **Infra (optional):** `docker compose up -d` for Postgres (`5432`) and MinIO if you want them. The backend **defaults to SQLite** under `apps/backend/data/` so you can run without Docker; set `DATABASE_URL` to a `postgresql://…` URL when using Compose Postgres.
 2. **Backend** (`apps/backend`): `python3 -m venv .venv && source .venv/bin/activate && pip install -r requirements.txt`, then `uvicorn app.main:app --reload --host 127.0.0.1 --port 8000`. Settings read from the environment; you can place a `.env` in `apps/backend/` or export vars from the root `.env` (see `.env.example`).
 3. **AI-API** (`apps/ai-api`): same pattern, `uvicorn app.main:app --reload --host 127.0.0.1 --port 8001`.
 4. **Web** (`apps/web`): from repo root, `npm install` then `npm run dev:web` (uses `apps/web/vite.config.ts` so the root is always `apps/web`, even from the monorepo root). The dev server proxies `/api` → backend (default `http://127.0.0.1:8000`); open **http://127.0.0.1:5173/**. Alternative: `cd apps/web && npm run dev`.

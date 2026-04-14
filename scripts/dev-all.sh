@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Start InkEcho HTTP/Web dev processes: backend (8000), ai-api (8001), web (5173).
-# MCP uses stdio and is not run as a background daemon here; see printed instructions.
+# Default: start detached (terminal returns immediately). Use --attach to stay in foreground.
+# MCP uses stdio; see printed instructions.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -9,14 +10,17 @@ mkdir -p "$LOG_DIR"
 
 DO_DOCKER=false
 CLEAN_PORTS=true
+ATTACH=false
 for arg in "$@"; do
   case "$arg" in
     --docker) DO_DOCKER=true ;;
     --no-clean) CLEAN_PORTS=false ;;
-    -h|--help)
-      echo "Usage: $0 [--docker] [--no-clean]"
-      echo "  --docker Run 'docker compose up -d' first (Postgres + MinIO)."
-      echo "  --no-clean   Do not free ports 8000/8001/5173 before starting (default is to stop them)."
+    --attach | --foreground) ATTACH=true ;;
+    -h | --help)
+      echo "Usage: $0 [--docker] [--no-clean] [--attach]"
+      echo "  --docker     Run 'docker compose up -d' first (Postgres + MinIO)."
+      echo "  --no-clean   Do not free ports 8000/8001/5173 before starting."
+      echo "  --attach     Block this terminal and stop all on Ctrl+C (default: background)."
       exit 0
       ;;
   esac
@@ -30,7 +34,9 @@ cleanup() {
     kill "$p" 2>/dev/null || true
   done
 }
-trap cleanup EXIT INT TERM
+
+# During setup, Ctrl+C stops anything we already started.
+trap 'cleanup; exit 130' INT TERM
 
 ensure_venv() (
   set -e
@@ -80,22 +86,35 @@ if [[ ! -f "$ROOT/apps/mcp-server/dist/index.js" ]]; then
   (cd "$ROOT" && npm run build:mcp)
 fi
 
+printf '%s\n' "${PIDS[@]}" >"$LOG_DIR/dev-all.pids"
+
 echo ""
 echo "InkEcho dev (PIDs ${PIDS[*]}) — logs: $LOG_DIR"
 echo "  Backend   http://127.0.0.1:8000/health"
 echo "  AI-API    http://127.0.0.1:8001/health"
 echo "  Web       http://127.0.0.1:5173/"
 echo ""
-echo "MCP server (stdio,4th process): not run in background."
+echo "MCP server (stdio, 4th process): not started here."
 echo "  Cursor / MCP client command:"
 echo "    node $ROOT/apps/mcp-server/dist/index.js"
 echo "  Or watch mode in another terminal:"
 echo "    cd $ROOT && npm run dev:mcp"
 echo ""
-printf '%s\n' "${PIDS[@]}" >"$LOG_DIR/dev-all.pids"
-
 echo "Tail logs: tail -f $LOG_DIR/backend.log $LOG_DIR/ai-api.log $LOG_DIR/web.log"
-echo "Stop all:    Ctrl+C  or  $ROOT/scripts/stop-all.sh"
+echo "Stop all:  $ROOT/scripts/stop-all.sh"
 echo ""
 
-wait "${PIDS[@]}"
+if [[ "$ATTACH" == true ]]; then
+  echo "Attached mode: Ctrl+C stops backend, ai-api, and web."
+  echo ""
+  trap 'cleanup; rm -f "$LOG_DIR/dev-all.pids"; exit 130' INT TERM
+  wait "${PIDS[@]}"
+  cleanup
+  rm -f "$LOG_DIR/dev-all.pids"
+else
+  # Do not kill children when this script exits (no EXIT trap).
+  trap - INT TERM
+  echo "Services are running in the background; this terminal is free."
+  echo "Use --attach if you want to block here and stop with Ctrl+C."
+  exit 0
+fi

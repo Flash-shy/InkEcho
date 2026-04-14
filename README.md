@@ -156,14 +156,15 @@ Monorepo **scaffold** is in place: `apps/web`, `apps/backend`, `apps/ai-api`, `a
 **One-shot (three HTTP/Web processes + MCP instructions):** from the repo root,
 
 ```bash
-./scripts/dev-all.sh # frees 8000 / 8001 / 5173 first, then backend + ai-api + web
-./scripts/dev-all.sh --docker # same, after docker compose up -d
+./scripts/dev-all.sh # frees 8000/8001/5173, starts three services in the background, terminal returns
+./scripts/dev-all.sh --attach # same but blocks this terminal; Ctrl+C stops all three
+./scripts/dev-all.sh --docker # same as first line, after docker compose up -d
 ./scripts/dev-all.sh --no-clean # skip port cleanup (only if you know nothing else needs those ports)
 ./scripts/stop-all.sh        # stop listeners on 8000 / 8001 / 5173 (+ recorded PIDs)
 ./scripts/stop-all.sh --force # if SIGTERM was not enough (SIGKILL)
 ```
 
-If `dev-all.sh` still returns immediately, check `logs/*.log` (e.g. `pip` or Vite errors). **Docker Desktop** or other tools sometimes bind **8000**; either stop that container or change the backend port in code and env.
+Logs: `logs/backend.log`, `logs/ai-api.log`, `logs/web.log`. If startup fails, check those files. **Docker Desktop** or other tools sometimes bind **8000**; either stop that container or change the backend port in code and env.
 
 MCP uses **stdio**; the script prints the `node …/dist/index.js` command for Cursor (or run `npm run dev:mcp` in another terminal). See script header comments.
 

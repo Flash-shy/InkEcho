@@ -30,6 +30,43 @@ async def _check_ai_api() -> tuple[bool, str | None]:
         return False, str(e)[:400]
 
 
+def _mcp_skills_catalog_url() -> str | None:
+    """Derive http://host:port/skills from MCP_HEALTH_URL (…/health)."""
+    u = settings.mcp_health_url.strip()
+    if not u:
+        return None
+    u = u.rstrip("/")
+    if u.endswith("/health"):
+        u = u[: -len("/health")].rstrip("/")
+    return u + "/skills"
+
+
+async def _fetch_bundled_skills_line() -> str | None:
+    """Human-facing summary from ink-echo-mcp GET /skills (bundled SKILL.md tree)."""
+    url = _mcp_skills_catalog_url()
+    if not url:
+        return None
+    try:
+        async with httpx.AsyncClient(timeout=3.0) as client:
+            r = await client.get(url)
+        if r.status_code >= 400:
+            return None
+        data = r.json()
+        skills = data.get("skills")
+        if not isinstance(skills, list) or not skills:
+            return None
+        ids: list[str] = []
+        for s in skills:
+            if isinstance(s, dict) and isinstance(s.get("id"), str):
+                ids.append(s["id"])
+        if not ids:
+            return None
+        ids.sort()
+        return f"Skills ({len(ids)}): " + ", ".join(ids)
+    except Exception:
+        return None
+
+
 def _mcp_platform_detail(body: dict) -> str | None:
     """Prefer ink-echo-mcp `platform_detail`; else legacy `instances` x/y."""
     pd = body.get("platform_detail")
@@ -93,9 +130,8 @@ async def _check_mcp() -> tuple[bool, str | None, str | None]:
             )
         ):
             msg = (
-                f"{msg} — ink-echo-mcp must expose GET /health (default 127.0.0.1:3033, INK_ECHO_MCP_HEALTH_PORT; "
-                "0 disables HTTP). Start e.g. `./scripts/dev-all.sh` (health-only on :3033), or "
-                "`npm run build:mcp && node apps/mcp-server/dist/index.js`, or Cursor MCP (often INK_ECHO_MCP_HEALTH_PORT=0)."
+                f"{msg} — ink-echo-mcp must expose GET /health (see MCP_HEALTH_URL). "
+                "Start `./scripts/dev-all.sh` or `npm run build:mcp && node apps/mcp-server/dist/index.js`."
             )[:600]
         return False, msg, None
 
@@ -105,13 +141,16 @@ async def platform_health():
     """Aggregated checks for the web status menu: Backend, Web, AI-API, MCP."""
     fe_ok, fe_err = await _check_frontend()
     ai_ok, ai_err = await _check_ai_api()
-    mcp_ok, mcp_err, mcp_detail = await _check_mcp()
+    mcp_ok, mcp_err, mcp_tech_detail = await _check_mcp()
+    skills_line = await _fetch_bundled_skills_line()
+    # Prefer listing bundled Agent Skills (GET /skills on mcp-server) over raw MCP /health line.
+    mcp_detail: str | None = skills_line if (mcp_ok and skills_line) else mcp_tech_detail
 
     checks: list[dict[str, object]] = [
         {"id": "backend", "label": "Backend API", "ok": True, "error": None, "detail": None},
         {"id": "frontend", "label": "Web frontend", "ok": fe_ok, "error": fe_err, "detail": None},
         {"id": "ai_api", "label": "AI-API", "ok": ai_ok, "error": ai_err, "detail": None},
-        {"id": "mcp", "label": "MCP server", "ok": mcp_ok, "error": mcp_err, "detail": mcp_detail},
+        {"id": "mcp", "label": "MCP & skills", "ok": mcp_ok, "error": mcp_err, "detail": mcp_detail},
     ]
     server_all_ok = all(bool(c["ok"]) for c in checks)
     return {"server_all_ok": server_all_ok, "checks": checks}

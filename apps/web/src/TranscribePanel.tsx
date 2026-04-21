@@ -50,6 +50,15 @@ type ApiSession = {
   minutes_error?: string | null;
 };
 
+const IDLE_SUMMARY_PATCH: Partial<SessionSummaryState> = {
+  summary_status: "idle",
+  summary_text: null,
+  summary_error: null,
+  minutes_status: "idle",
+  minutes_text: null,
+  minutes_error: null,
+};
+
 type Props = {
   clips: TranscribeClip[];
   onRemoveClip: (id: string) => void;
@@ -176,14 +185,20 @@ export function TranscribePanel({
   }, [completedTranscripts, transcribeHydrated]);
 
   const keysSig = completedTranscripts.map((t) => t.key).join(",");
+  const prevCompletedKeysRef = useRef<string[]>([]);
 
+  /** Only merge summary/minutes for newly added sessions so clearing UI before a new STT run is not overwritten. */
   useEffect(() => {
-    if (!keysSig) return;
-    const keys = keysSig.split(",");
+    const curr = completedTranscripts.map((t) => t.key);
+    const prev = prevCompletedKeysRef.current;
+    const newKeys = curr.filter((k) => !prev.includes(k));
+    prevCompletedKeysRef.current = curr;
+    if (newKeys.length === 0) return;
+
     let cancelled = false;
     void (async () => {
       const pairs = await Promise.all(
-        keys.map(async (k) => {
+        newKeys.map(async (k) => {
           try {
             const r = await fetch(`/api/sessions/${k}`);
             if (!r.ok) return null;
@@ -214,7 +229,7 @@ export function TranscribePanel({
     return () => {
       cancelled = true;
     };
-  }, [keysSig, mergeSessionSummary]);
+  }, [keysSig, completedTranscripts, mergeSessionSummary]);
 
   const pollSummaryUntilDone = useCallback((sessionKey: string) => {
     const started = Date.now();
@@ -396,6 +411,9 @@ export function TranscribePanel({
 
   const onTranscribe = useCallback(
     async (clip: TranscribeClip) => {
+      for (const row of completedTranscripts) {
+        mergeSessionSummary(row.key, { ...IDLE_SUMMARY_PATCH });
+      }
       teardownWs();
       setError(null);
       setSegments([]);
@@ -520,7 +538,7 @@ export function TranscribePanel({
         });
       };
     },
-    [scrollResultsIntoView, teardownWs],
+    [completedTranscripts, mergeSessionSummary, scrollResultsIntoView, teardownWs],
   );
 
   const scrollToTranscriptBlock = useCallback((sessionKey: string) => {

@@ -1,13 +1,14 @@
 #!/usr/bin/env node
-import http from "node:http";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import type { Request as ExpressRequest, Response as ExpressResponse } from "express";
+import { createMcpExpressApp } from "@modelcontextprotocol/sdk/server/express.js";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { z } from "zod";
 
-import { getSkill, listSkills } from "./skills.js";
+import { getSkill, listSkills, listSkillsForMcpRegistration } from "./skills.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const defaultSkillsDir = path.resolve(__dirname, "..", "skills");
@@ -15,27 +16,22 @@ const skillsDir = process.env.INK_ECHO_SKILLS_DIR ?? defaultSkillsDir;
 const backendBase = (process.env.INK_ECHO_BACKEND_URL ?? "http://127.0.0.1:8000").replace(/\/$/, "");
 const backendToken = (process.env.INK_ECHO_MCP_BACKEND_TOKEN ?? "").trim();
 
-/** True after `StdioServerTransport` has connected (Cursor / Inspector). */
-let stdioTransportConnected = false;
-
-function mcpModeLabel(): string {
-  const m = (process.env.INK_ECHO_MCP_MODE ?? "stdio").trim().toLowerCase();
-  return m === "health-only" ? "health-only" : "stdio";
-}
+const listenHost = (process.env.INK_ECHO_MCP_HOST ?? "127.0.0.1").trim();
+const listenPortRaw = process.env.INK_ECHO_MCP_HTTP_PORT ?? process.env.INK_ECHO_MCP_HEALTH_PORT ?? "3033";
+const listenPort =
+  listenPortRaw === "" || listenPortRaw === "0" ? 0 : Number.parseInt(listenPortRaw, 10);
 
 function buildMcpHealthPayload(httpPort: number): string {
-  const mode = mcpModeLabel();
-  const stdioOn = mode === "health-only" ? false : stdioTransportConnected;
-  const stdioPart = stdioOn ? "stdio=yes" : "stdio=no";
-  const platformDetail = `pid=${process.pid} · ${mode} · HTTP :${httpPort} · ${stdioPart}`;
+  const platformDetail = `pid=${process.pid} · streamable-http · :${httpPort}/mcp · GET /skills · GET /health`;
   return JSON.stringify({
     ok: true,
     service: "ink-echo-mcp",
     pid: process.pid,
-    mcp_mode: mode,
+    mcp_mode: "streamable-http",
     http_health_port: httpPort,
-    stdio_mcp: stdioOn,
-    /** Single line for Platform menu (this process only — not a cluster count). */
+    mcp_path: "/mcp",
+    stdio_mcp: false,
+    streamable_http_mcp: true,
     platform_detail: platformDetail,
   });
 }
@@ -88,17 +84,191 @@ async function pollMeetingMinutesUntilDone(
   return { ok: false, error: "timeout", body: `Meeting minutes still running after ${maxWaitMs}ms` };
 }
 
-const server = new McpServer(
-  { name: "ink-echo-mcp", version: "0.1.0" },
-  {
-    instructions:
-      "InkEcho MCP: list_sessions / get_transcript / get_summary call the backend at INK_ECHO_BACKEND_URL; " +
-      "generate_meeting_minutes starts POST /sessions/{id}/meeting-minutes and polls until structured minutes are ready. " +
-      "semantic_search / rag_answer call POST /rag/search and /rag/answer (cross-session transcript RAG). " +
-      "list_skills / get_skill expose Agent Skills from the skills/ tree (each folder with SKILL.md). " +
-      "Optional INK_ECHO_MCP_BACKEND_TOKEN sets Authorization.",
-  },
-);
+function textContent(text: string): { type: "text"; text: string } {
+  return { type: "text", text };
+}
+
+const meetingMinutesInputSchema = z.object({
+  sessionId: z.string().uuid(),
+  waitForResult: z
+    .boolean()
+    .optional()
+    .describe("If true (default), block until ready/error or timeout. If false, return immediately after POST."),
+  maxWaitSeconds: z
+    .number()
+    .int()
+    .min(10)
+    .max(600)
+    .optional()
+    .describe("Max seconds to poll when waitForResult is true (default 120)"),
+});
+
+const semanticSearchInputSchema = z.object({
+  query: z.string().describe("Natural-language query"),
+  limit: z.number().int().min(1).max(50).optional().describe("Max hits (default 8)"),
+  sessionIds: z.array(z.string().uuid()).optional().describe("Only search these session UUIDs"),
+});
+
+const ragAnswerInputSchema = z.object({
+  question: z.string(),
+  limit: z.number().int().min(1).max(20).optional().describe("Chunks to retrieve (default 6)"),
+  sessionIds: z.array(z.string().uuid()).optional().describe("Restrict retrieval to these sessions"),
+});
+
+const crossSessionRagSchema = z.discriminatedUnion("operation", [
+  z.object({
+    operation: z.literal("search"),
+    query: z.string(),
+    limit: z.number().int().min(1).max(50).optional(),
+    sessionIds: z.array(z.string().uuid()).optional(),
+  }),
+  z.object({
+    operation: z.literal("answer"),
+    question: z.string(),
+    limit: z.number().int().min(1).max(20).optional(),
+    sessionIds: z.array(z.string().uuid()).optional(),
+  }),
+]);
+
+async function execGenerateMeetingMinutes(args: z.infer<typeof meetingMinutesInputSchema>) {
+  const { sessionId, waitForResult, maxWaitSeconds } = args;
+  const maxWaitMs = (maxWaitSeconds ?? 120) * 1000;
+  const post = await backendPost(`/sessions/${sessionId}/meeting-minutes`);
+  const postText = await post.text();
+
+  if (!post.ok && post.status !== 409) {
+    return {
+      content: [
+        textContent(
+          JSON.stringify(
+            { error: "meeting_minutes_start_failed", status: post.status, body: postText },
+            null,
+            2,
+          ),
+        ),
+      ],
+      isError: true,
+    };
+  }
+
+  if (waitForResult === false) {
+    return {
+      content: [
+        textContent(
+          JSON.stringify(
+            {
+              sessionId,
+              started: post.ok || post.status === 409,
+              httpStatus: post.status,
+              note: "Poll get_summary or GET /sessions/{id} for minutes_status / minutes_text.",
+            },
+            null,
+            2,
+          ),
+        ),
+      ],
+    };
+  }
+
+  const polled = await pollMeetingMinutesUntilDone(sessionId, maxWaitMs);
+  if (!polled.ok) {
+    return {
+      content: [
+        textContent(
+          JSON.stringify(
+            {
+              error: polled.error,
+              sessionId,
+              status: polled.status,
+              body: polled.body,
+            },
+            null,
+            2,
+          ),
+        ),
+      ],
+      isError: true,
+    };
+  }
+
+  const s = polled.session;
+  return {
+    content: [
+      textContent(
+        JSON.stringify(
+          {
+            sessionId: s.id,
+            minutes_status: s.minutes_status,
+            minutes_text: s.minutes_text,
+            minutes_error: s.minutes_error,
+          },
+          null,
+          2,
+        ),
+      ),
+    ],
+    isError: s.minutes_status === "error",
+  };
+}
+
+async function execSemanticSearch(args: z.infer<typeof semanticSearchInputSchema>) {
+  const { query, limit, sessionIds } = args;
+  const r = await fetch(`${backendBase}/rag/search`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...(backendToken ? { Authorization: `Bearer ${backendToken}` } : {}),
+    },
+    body: JSON.stringify({
+      query,
+      limit: limit ?? 8,
+      session_ids: sessionIds,
+    }),
+  });
+  const text = await r.text();
+  if (!r.ok) {
+    return {
+      content: [textContent(JSON.stringify({ error: "backend_request_failed", status: r.status, body: text }))],
+      isError: true,
+    };
+  }
+  return { content: [textContent(text)] };
+}
+
+async function execRagAnswer(args: z.infer<typeof ragAnswerInputSchema>) {
+  const { question, limit, sessionIds } = args;
+  const r = await fetch(`${backendBase}/rag/answer`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...(backendToken ? { Authorization: `Bearer ${backendToken}` } : {}),
+    },
+    body: JSON.stringify({ question, limit: limit ?? 6, session_ids: sessionIds }),
+  });
+  const text = await r.text();
+  if (!r.ok) {
+    return {
+      content: [textContent(JSON.stringify({ error: "backend_request_failed", status: r.status, body: text }))],
+      isError: true,
+    };
+  }
+  return { content: [textContent(text)] };
+}
+
+async function createInkEchoMcpServer(): Promise<McpServer> {
+  const server = new McpServer(
+    { name: "ink-echo-mcp", version: "0.1.0" },
+    {
+      instructions:
+        "InkEcho MCP (Streamable HTTP): connect to this server's POST /mcp endpoint. " +
+        "list_sessions / get_transcript / get_summary call the backend at INK_ECHO_BACKEND_URL; " +
+        "generate_meeting_minutes starts POST /sessions/{id}/meeting-minutes and polls until structured minutes are ready. " +
+        "semantic_search / rag_answer call POST /rag/search and /rag/answer (cross-session transcript RAG). " +
+        "list_skills / get_skill expose Agent Skills from the skills/ tree (each folder with SKILL.md). " +
+        "Bundled skills also register skill_* tools (see list_skills). " +
+        "Optional INK_ECHO_MCP_BACKEND_TOKEN sets Authorization.",
+    },
+  );
 
 server.registerTool(
   "list_skills",
@@ -269,34 +439,9 @@ server.registerTool(
     description:
       "Cross-session semantic search over indexed transcript chunks (backend POST /rag/search). " +
       "Indexes are built after transcription or via POST /rag/index/{sessionId}.",
-    inputSchema: z.object({
-      query: z.string().describe("Natural-language query"),
-      limit: z.number().int().min(1).max(50).optional().describe("Max hits (default 8)"),
-      sessionIds: z.array(z.string().uuid()).optional().describe("Only search these session UUIDs"),
-    }),
+    inputSchema: semanticSearchInputSchema,
   },
-  async ({ query, limit, sessionIds }) => {
-    const r = await fetch(`${backendBase}/rag/search`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        ...(backendToken ? { Authorization: `Bearer ${backendToken}` } : {}),
-      },
-      body: JSON.stringify({
-        query,
-        limit: limit ?? 8,
-        session_ids: sessionIds,
-      }),
-    });
-    const text = await r.text();
-    if (!r.ok) {
-      return {
-        content: [{ type: "text", text: JSON.stringify({ error: "backend_request_failed", status: r.status, body: text }) }],
-        isError: true,
-      };
-    }
-    return { content: [{ type: "text", text }] };
-  },
+  execSemanticSearch,
 );
 
 server.registerTool(
@@ -304,30 +449,9 @@ server.registerTool(
   {
     description:
       "Answer a question using retrieved transcript excerpts across sessions, with LLM citations (backend POST /rag/answer).",
-    inputSchema: z.object({
-      question: z.string(),
-      limit: z.number().int().min(1).max(20).optional().describe("Chunks to retrieve (default 6)"),
-      sessionIds: z.array(z.string().uuid()).optional().describe("Restrict retrieval to these sessions"),
-    }),
+    inputSchema: ragAnswerInputSchema,
   },
-  async ({ question, limit, sessionIds }) => {
-    const r = await fetch(`${backendBase}/rag/answer`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        ...(backendToken ? { Authorization: `Bearer ${backendToken}` } : {}),
-      },
-      body: JSON.stringify({ question, limit: limit ?? 6, session_ids: sessionIds }),
-    });
-    const text = await r.text();
-    if (!r.ok) {
-      return {
-        content: [{ type: "text", text: JSON.stringify({ error: "backend_request_failed", status: r.status, body: text }) }],
-        isError: true,
-      };
-    }
-    return { content: [{ type: "text", text }] };
-  },
+  execRagAnswer,
 );
 
 server.registerTool(
@@ -336,150 +460,165 @@ server.registerTool(
     description:
       "Start AI meeting minutes for a transcribed session (POST /sessions/{id}/meeting-minutes), then poll GET /sessions/{id} until minutes_status is ready or error. " +
       "Returns topics / decisions / open questions / action items as stored minutes_text. If a job is already running (409), polls until it finishes.",
-    inputSchema: z.object({
-      sessionId: z.string().uuid(),
-      waitForResult: z
-        .boolean()
-        .optional()
-        .describe("If true (default), block until ready/error or timeout. If false, return immediately after POST."),
-      maxWaitSeconds: z
-        .number()
-        .int()
-        .min(10)
-        .max(600)
-        .optional()
-        .describe("Max seconds to poll when waitForResult is true (default 120)"),
-    }),
+    inputSchema: meetingMinutesInputSchema,
   },
-  async ({ sessionId, waitForResult, maxWaitSeconds }) => {
-    const maxWaitMs = (maxWaitSeconds ?? 120) * 1000;
-    const post = await backendPost(`/sessions/${sessionId}/meeting-minutes`);
-    const postText = await post.text();
-
-    if (!post.ok && post.status !== 409) {
-      return {
-        content: [
-          {
-            type: "text",
-            text: JSON.stringify(
-              { error: "meeting_minutes_start_failed", status: post.status, body: postText },
-              null,
-              2,
-            ),
-          },
-        ],
-        isError: true,
-      };
-    }
-
-    if (waitForResult === false) {
-      return {
-        content: [
-          {
-            type: "text",
-            text: JSON.stringify(
-              {
-                sessionId,
-                started: post.ok || post.status === 409,
-                httpStatus: post.status,
-                note: "Poll get_summary or GET /sessions/{id} for minutes_status / minutes_text.",
-              },
-              null,
-              2,
-            ),
-          },
-        ],
-      };
-    }
-
-    const polled = await pollMeetingMinutesUntilDone(sessionId, maxWaitMs);
-    if (!polled.ok) {
-      return {
-        content: [
-          {
-            type: "text",
-            text: JSON.stringify(
-              {
-                error: polled.error,
-                sessionId,
-                status: polled.status,
-                body: polled.body,
-              },
-              null,
-              2,
-            ),
-          },
-        ],
-        isError: true,
-      };
-    }
-
-    const s = polled.session;
-    return {
-      content: [
-        {
-          type: "text",
-          text: JSON.stringify(
-            {
-              sessionId: s.id,
-              minutes_status: s.minutes_status,
-              minutes_text: s.minutes_text,
-              minutes_error: s.minutes_error,
-            },
-            null,
-            2,
-          ),
-        },
-      ],
-      isError: s.minutes_status === "error",
-    };
-  },
+  execGenerateMeetingMinutes,
 );
 
-/** Parallel HTTP /health for platform aggregation (backend probes this). Stdio MCP is unchanged. */
-function startHealthHttpIfEnabled(): void {
-  const raw = process.env.INK_ECHO_MCP_HEALTH_PORT;
-  const port =
-    raw === "" || raw === "0" ? 0 : Number.parseInt(raw ?? "3033", 10);
-  if (!Number.isFinite(port) || port <= 0) return;
+  await registerBundledSkillMcpTools(server);
+  return server;
+}
 
-  const httpServer = http.createServer((req, res) => {
-    const pathOnly = req.url?.split("?")[0] ?? "";
-    if (req.method === "GET" && pathOnly === "/health") {
-      const payload = buildMcpHealthPayload(port);
-      res.writeHead(200, { "Content-Type": "application/json; charset=utf-8" });
-      res.end(payload);
+async function registerBundledSkillMcpTools(server: McpServer): Promise<void> {
+  const entries = await listSkillsForMcpRegistration(skillsDir);
+  const used = new Set<string>();
+  for (const s of entries) {
+    if (used.has(s.mcpToolName)) {
+      console.error(`[ink-echo-mcp] skip skill "${s.id}": duplicate MCP tool name "${s.mcpToolName}"`);
+      continue;
+    }
+    used.add(s.mcpToolName);
+
+    const equiv =
+      s.mcpBind === "generate_meeting_minutes"
+        ? "generate_meeting_minutes"
+        : s.mcpBind === "semantic_search"
+          ? "semantic_search"
+          : s.mcpBind === "rag_answer"
+            ? "rag_answer"
+            : s.mcpBind === "rag_bundle"
+              ? "semantic_search | rag_answer"
+              : "instructions (JSON body only)";
+    const description = `${s.description.trim()} [Bundled skill: ${s.id}; same behavior as ${equiv}.]`;
+
+    switch (s.mcpBind) {
+      case "generate_meeting_minutes":
+        server.registerTool(s.mcpToolName, { description, inputSchema: meetingMinutesInputSchema }, execGenerateMeetingMinutes);
+        break;
+      case "semantic_search":
+        server.registerTool(s.mcpToolName, { description, inputSchema: semanticSearchInputSchema }, execSemanticSearch);
+        break;
+      case "rag_answer":
+        server.registerTool(s.mcpToolName, { description, inputSchema: ragAnswerInputSchema }, execRagAnswer);
+        break;
+      case "rag_bundle":
+        server.registerTool(
+          s.mcpToolName,
+          {
+            description,
+            inputSchema: crossSessionRagSchema,
+          },
+          async (args) => {
+            if (args.operation === "search") {
+              return execSemanticSearch({
+                query: args.query,
+                limit: args.limit,
+                sessionIds: args.sessionIds,
+              });
+            }
+            return execRagAnswer({
+              question: args.question,
+              limit: args.limit,
+              sessionIds: args.sessionIds,
+            });
+          },
+        );
+        break;
+      case "instructions_only":
+        server.registerTool(s.mcpToolName, { description }, async () => {
+          const skill = await getSkill(skillsDir, s.id);
+          if (!skill) {
+            return {
+              content: [textContent(JSON.stringify({ error: "not_found", skillId: s.id }))],
+              isError: true,
+            };
+          }
+          return {
+            content: [
+              textContent(
+                JSON.stringify(
+                  {
+                    ...skill,
+                    note: "Instructions only — use other MCP tools (e.g. list_sessions) as described in body.",
+                  },
+                  null,
+                  2,
+                ),
+              ),
+            ],
+          };
+        });
+        break;
+    }
+  }
+}
+
+if (!Number.isFinite(listenPort) || listenPort <= 0) {
+  console.error(
+    "[ink-echo-mcp] Set INK_ECHO_MCP_HTTP_PORT or INK_ECHO_MCP_HEALTH_PORT to a positive port (default 3033). Use 0 only to disable; HTTP MCP requires a port.",
+  );
+  process.exit(1);
+}
+
+const app = createMcpExpressApp({ host: listenHost });
+
+app.get("/health", (_req: ExpressRequest, res: ExpressResponse) => {
+  res.type("application/json; charset=utf-8").send(buildMcpHealthPayload(listenPort));
+});
+
+/** Read-only HTTP catalog (same data as MCP tools list_skills / get_skill). */
+app.get("/skills", async (_req: ExpressRequest, res: ExpressResponse) => {
+  try {
+    const skills = await listSkills(skillsDir);
+    res.json({ skills });
+  } catch (err) {
+    console.error("[ink-echo-mcp] GET /skills:", err);
+    res.status(500).json({ error: "skills_list_failed" });
+  }
+});
+
+app.get("/skills/:skillId", async (req: ExpressRequest, res: ExpressResponse) => {
+  try {
+    const raw = req.params.skillId;
+    const skillId = Array.isArray(raw) ? (raw[0] ?? "") : (raw ?? "");
+    const skill = await getSkill(skillsDir, skillId);
+    if (!skill) {
+      res.status(404).json({ error: "skill_not_found", skillId });
       return;
     }
-    res.writeHead(404).end();
-  });
-
-  httpServer.on("error", (err) => {
-    console.error(`[ink-echo-mcp] health HTTP :${port} —`, err);
-  });
-  httpServer.listen(port, "127.0.0.1", () => {
-    console.error(`[ink-echo-mcp] health OK http://127.0.0.1:${port}/health`);
-  });
-}
-
-startHealthHttpIfEnabled();
-
-const mcpMode = (process.env.INK_ECHO_MCP_MODE ?? "stdio").trim().toLowerCase();
-if (mcpMode === "health-only") {
-  const raw = process.env.INK_ECHO_MCP_HEALTH_PORT ?? "3033";
-  const port = raw === "" || raw === "0" ? 0 : Number.parseInt(raw, 10);
-  if (!Number.isFinite(port) || port <= 0) {
-    console.error(
-      "[ink-echo-mcp] INK_ECHO_MCP_MODE=health-only requires INK_ECHO_MCP_HEALTH_PORT > 0 (HTTP /health for platform probe).",
-    );
-    process.exit(1);
+    res.json(skill);
+  } catch (err) {
+    console.error("[ink-echo-mcp] GET /skills/:skillId:", err);
+    res.status(500).json({ error: "skill_read_failed" });
   }
-  console.error(
-    "[ink-echo-mcp] health-only mode: no stdio MCP (Platform /health only). Use default mode for Cursor tools (list_skills, semantic_search, …).",
-  );
-  await new Promise<never>(() => {});
-}
+});
 
-const transport = new StdioServerTransport();
-await server.connect(transport);
-stdioTransportConnected = true;
+app.all("/mcp", async (req: ExpressRequest, res: ExpressResponse) => {
+  const server = await createInkEchoMcpServer();
+  try {
+    const transport = new StreamableHTTPServerTransport({
+      sessionIdGenerator: undefined,
+    });
+    await server.connect(transport);
+    await transport.handleRequest(req, res, req.body);
+    res.on("close", () => {
+      void transport.close();
+      void server.close();
+    });
+  } catch (err) {
+    console.error("[ink-echo-mcp] /mcp error:", err);
+    if (!res.headersSent) {
+      res.status(500).json({
+        jsonrpc: "2.0",
+        error: { code: -32603, message: "Internal server error" },
+        id: null,
+      });
+    }
+  }
+});
+
+app.listen(listenPort, listenHost, () => {
+  console.error(
+    `[ink-echo-mcp] MCP http://${listenHost}:${listenPort}/mcp · skills http://${listenHost}:${listenPort}/skills · health http://${listenHost}:${listenPort}/health`,
+  );
+});

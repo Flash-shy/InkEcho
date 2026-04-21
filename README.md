@@ -31,7 +31,7 @@ InkEcho is **four deployable services** with narrow contracts so you can scale, 
 |--------|------|----------|
 | **Frontend** (`apps/web`) | React SPA: capture UX, transcript UI, settings, export downloads | **Backend** only (HTTP + WebSocket) |
 | **Backend** (`apps/backend`) | Product API: auth, sessions, transcript storage, export jobs; **orchestrates** AI work; **does not** expose raw provider keys to the browser | PostgreSQL, object storage, **AI-API** (mTLS or signed service JWT), optional queue |
-| **AI-API** (`apps/ai-api`) | Model boundary: streaming STT, chat/completions, future embeddings / RAG inference | Upstream LLM/STT (cloud or local OpenAI-compatible servers) |
+| **AI-API** (`apps/ai-api`) | Model boundary: streaming STT, chat/completions, embeddings; optional **MCP client** to ink-echo-mcp (`/v1/mcp/tools*`) when `MCP_HEALTH_URL` is set | Upstream LLM/STT; **optional** ink-echo-mcp via Streamable HTTP (`POST /mcp`) |
 | **MCP server** (`apps/mcp-server`) | MCP **data tools** for agents (sessions, transcripts, semantic search later) **plus** bundled **Agent Skills** (`SKILL.md` trees) exposed via MCP tools/resources (e.g. `list_skills`, `get_skill`) | **Backend** internal / read API (single authorization story); skills are read from the MCP bundle on disk |
 
 **Trust boundary**: Browsers and MCP clients **do not** call AI-API directly. The backend decides when to transcribe or summarize, sends job descriptors and server-side credentials to AI-API, persists results, and streams progress to the web app. **Skills are non-secret instructional content** for agents (markdown only); API keys and private user data still flow through the backend only.
@@ -173,8 +173,9 @@ Summaries use the same **OpenAI-compatible** `chat/completions` stack as above, 
 **One-shot (three HTTP/Web processes + MCP instructions):** from the repo root,
 
 ```bash
-./scripts/dev-all.sh # frees 8000/8001/5173, starts three services in the background, terminal returns
-./scripts/dev-all.sh --attach # same but blocks this terminal; Ctrl+C stops all three
+./scripts/dev-all.sh # backend + ai-api + web + MCP Streamable HTTP (:3033 /mcp and /health)
+./scripts/dev-all.sh --no-mcp # skip MCP (if you run it elsewhere)
+./scripts/dev-all.sh --attach # same but blocks this terminal; Ctrl+C stops all started processes
 ./scripts/dev-all.sh --docker # same as first line, after docker compose up -d
 ./scripts/dev-all.sh --no-clean # skip port cleanup (only if you know nothing else needs those ports)
 ./scripts/stop-all.sh        # stop listeners on 8000 / 8001 / 5173 (+ recorded PIDs)
@@ -183,29 +184,30 @@ Summaries use the same **OpenAI-compatible** `chat/completions` stack as above, 
 
 Logs: `logs/backend.log`, `logs/ai-api.log`, `logs/web.log`. If startup fails, check those files. **Docker Desktop** or other tools sometimes bind **8000**; either stop that container or change the backend port in code and env.
 
-`scripts/dev-all.sh` starts **MCP in `INK_ECHO_MCP_MODE=health-only`** on **:3033** so the web **Platform** menu can show MCP OK; that process does **not** expose stdio tools. For **Cursor** agents (`list_skills`, `get_skill`, `semantic_search`, `generate_meeting_minutes`, …), add **ink-echo-mcp** in Cursor MCP settings and set **`INK_ECHO_MCP_HEALTH_PORT=0`** if **3033** is already taken by dev-all. Bundled skills are **not** listed under Cursor **Settings → Skills**; they live in `apps/mcp-server/skills/` and are read via **`list_skills`** / **`get_skill`**.
+**MCP** uses **Streamable HTTP**: `POST http://127.0.0.1:3033/mcp` for the protocol, **`GET /skills`** (and **`GET /skills/{id}`**) for a JSON catalog of bundled skills, and **`GET /health`** for the web **Platform** menu. `scripts/dev-all.sh` starts this process by default (override port with **`INK_ECHO_MCP_HTTP_PORT`**). **Cursor** should point at the same URL (see `.cursor/mcp.json`, type **`streamable-http`**). Bundled skills are **not** listed under Cursor **Settings → Skills**; they live in `apps/mcp-server/skills/` and are read via **`list_skills`** / **`get_skill`** (MCP) or the HTTP catalog.
 
 1. **Infra (optional):** `docker compose up -d` for Postgres (`5432`) and MinIO if you want them. The backend **defaults to SQLite** under `apps/backend/data/` so you can run without Docker; set `DATABASE_URL` to a `postgresql://…` URL when using Compose Postgres.
 2. **Backend** (`apps/backend`): `python3 -m venv .venv && source .venv/bin/activate && pip install -r requirements.txt`, then `uvicorn app.main:app --reload --host 127.0.0.1 --port 8000`. Settings read from the environment; you can place a `.env` in `apps/backend/` or export vars from the root `.env` (see `.env.example`).
-3. **AI-API** (`apps/ai-api`): same pattern, `uvicorn app.main:app --reload --host 127.0.0.1 --port 8001`.
+3. **AI-API** (`apps/ai-api`): same pattern, `uvicorn app.main:app --reload --host 127.0.0.1 --port 8001`. When **`MCP_HEALTH_URL`** is set (or **`MCP_HTTP_URL`** for an explicit `http://host:port/mcp`), AI-API runs the **official MCP Python client** (Streamable HTTP) against ink-echo-mcp: **`GET /v1/mcp/tools`** and **`POST /v1/mcp/tools/call`** with **`Authorization: Bearer <AI_API_SERVICE_TOKEN>`** — equivalent to Cursor’s **`list_tools`** / **`call_tool`**. **`GET /health`** includes **`mcp_client.endpoint`** when configured.
 4. **Web** (`apps/web`): from repo root, `npm install` then `npm run dev:web` (uses `apps/web/vite.config.ts` so the root is always `apps/web`, even from the monorepo root). The dev server proxies `/api` → backend (default `http://127.0.0.1:8000`); open **http://127.0.0.1:5173/**. Alternative: `cd apps/web && npm run dev`. Meeting minutes and cross-session RAG calls are centralized in **`apps/web/src/inkecho/`** (`startMeetingMinutes`, `semanticSearch`, `ragAnswer`, …) so the UI matches the same backend routes MCP tools use.
-5. **MCP server** (`apps/mcp-server`): stdio for MCP clients, plus **optional** HTTP **`GET /health`** on `127.0.0.1` (default port **3033**, override with `INK_ECHO_MCP_HEALTH_PORT`; set to `0` to disable). The web app’s **Platform** status uses the backend’s `GET /health/platform`, which probes **Web frontend**, **AI-API**, **MCP /health** (JSON `ok`, plus **`platform_detail`** describing the responding process: pid, mode, HTTP port, stdio). Legacy **`instances: { expected, healthy }`** is still accepted if present. Run e.g. `INK_ECHO_MCP_HEALTH_PORT=3033 node apps/mcp-server/dist/index.js` or `npm run dev:mcp` (set the env in your shell or MCP host config). Bundled skills live under `apps/mcp-server/skills/`. Override the directory with `INK_ECHO_SKILLS_DIR` if needed.
+5. **MCP server** (`apps/mcp-server`): **Streamable HTTP** at **`POST /mcp`**, **`GET /skills`**, **`GET /skills/{skill_id}`**, and **`GET /health`** on `127.0.0.1` (default **3033** via **`INK_ECHO_MCP_HTTP_PORT`** or **`INK_ECHO_MCP_HEALTH_PORT`**). The web app’s **Platform** status probes **MCP /health** and may list skill ids from **`GET /skills`** (same origin as **`MCP_HEALTH_URL`**). Run e.g. `npm run start -w @ink-echo/mcp-server` after `npm run build:mcp`, or use `./scripts/dev-all.sh`. Bundled skills live under `apps/mcp-server/skills/`. Override the directory with `INK_ECHO_SKILLS_DIR` if needed.
 
 Root **npm** workspaces: `@ink-echo/web` and `@ink-echo/mcp-server`. Python apps keep their own `requirements.txt`.
 
 ## Testing the MCP server
 
-InkEcho MCP uses **stdio** for the MCP protocol. The same process can expose **`http://127.0.0.1:3033/health`** (default; see `INK_ECHO_MCP_HEALTH_PORT`) so the backend can include MCP in **Platform** health. A client must still spawn `node …/dist/index.js` and talk over stdin/stdout.
+InkEcho MCP uses **Streamable HTTP** (`POST /mcp`) on the same port as **`GET /health`** (default **3033**). Clients (Cursor, `StreamableHTTPClientTransport`, or Python MCP clients) connect to the URL; **`npm run test:mcp`** starts a server on port **3034** and runs a short client check.
 
 ### A. Official MCP Inspector (good for manual testing)
 
 From the **repo root** (downloads the inspector via `npx` the first time):
 
 ```bash
+./scripts/dev-all.sh   # or: npm run start -w @ink-echo/mcp-server (after build:mcp)
 npm run inspect:mcp
 ```
 
-This builds `apps/mcp-server` and launches [@modelcontextprotocol/inspector](https://www.npmjs.com/package/@modelcontextprotocol/inspector). Open the UI (often **http://localhost:6274**), connect to the server it starts, then under **Tools** try e.g. **`list_skills`** or **`get_skill`** with arguments `{"skillId":"meeting-minutes"}`.
+This builds `apps/mcp-server` and launches [@modelcontextprotocol/inspector](https://www.npmjs.com/package/@modelcontextprotocol/inspector) against **`http://127.0.0.1:3033/mcp`** (Streamable HTTP). The MCP process must already be listening on **3033**. Open the UI (often **http://localhost:6274**), then under **Tools** try e.g. **`list_skills`** or **`get_skill`** with arguments `{"skillId":"meeting-minutes"}`.
 
 Non-interactive / terminal smoke test (no Inspector UI; uses SDK client):
 
@@ -224,7 +226,7 @@ Inspector may recommend **Node 22+**; if the UI fails to start, upgrade Node or 
 ### B. Cursor
 
 1. Run `npm run build:mcp` so `apps/mcp-server/dist/index.js` exists.
-2. **Project config (recommended):** this repo includes **`.cursor/mcp.json`** — it runs the MCP server with `cwd` at the repo root, **`INK_ECHO_MCP_HEALTH_PORT=0`** (avoids clashing with `dev-all.sh`, which uses **3033** for Platform health-only), and **`INK_ECHO_BACKEND_URL=http://127.0.0.1:8000`**. **Restart Cursor** after pulling or editing MCP config.
+2. **Project config (recommended):** **`.cursor/mcp.json`** uses **`type`: `streamable-http`** and **`url`**: `http://127.0.0.1:3033/mcp`. Start **`./scripts/dev-all.sh`** (or `node apps/mcp-server/dist/index.js` with **`INK_ECHO_BACKEND_URL`**) so that endpoint is listening. **Restart Cursor** after edits.
 3. Alternatively, add the same server under **Settings → MCP** using an absolute path in `args` if your Cursor build ignores `cwd` / `${workspaceFolder}`.
 
 Optional env: `INK_ECHO_SKILLS_DIR` to point at a custom skills directory; `INK_ECHO_MCP_BACKEND_TOKEN` when the backend requires Bearer auth.

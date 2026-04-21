@@ -1,7 +1,9 @@
 import base64
 import hmac
+import os
 import shutil
 import subprocess
+import tempfile
 from typing import Any
 
 import httpx
@@ -95,7 +97,25 @@ def _openrouter_audio_format(filename: str, content_type: str | None) -> str:
     return "wav"
 
 
-def _ffmpeg_bytes_to_wav_pcm16_mono(data: bytes) -> bytes:
+def _ffmpeg_input_suffix(filename: str, content_type: str | None) -> str:
+    if "." in filename:
+        ext = filename.rsplit(".", 1)[-1].lower()
+        if ext and len(ext) <= 8 and ext.isalnum():
+            return f".{ext}"
+    if content_type:
+        ct = content_type.lower()
+        if "mp4" in ct or "quicktime" in ct:
+            return ".mp4"
+        if "webm" in ct:
+            return ".webm"
+        if "mpeg" in ct or "mp3" in ct:
+            return ".mp3"
+        if "wav" in ct:
+            return ".wav"
+    return ".bin"
+
+
+def _ffmpeg_bytes_to_wav_pcm16_mono(data: bytes, filename: str = "", content_type: str | None = None) -> bytes:
     """Demux/decode arbitrary audio or video-with-audio to 16 kHz mono WAV (anything ffmpeg understands)."""
     if not shutil.which("ffmpeg"):
         raise HTTPException(
@@ -105,33 +125,52 @@ def _ffmpeg_bytes_to_wav_pcm16_mono(data: bytes) -> bytes:
                 "and ensure it is on PATH, or set STT_PROVIDER=openai with OPENAI_API_KEY."
             ),
         )
-    proc = subprocess.run(
-        [
-            "ffmpeg",
-            "-hide_banner",
-            "-loglevel",
-            "error",
-            "-i",
-            "pipe:0",
-            "-ar",
-            "16000",
-            "-ac",
-            "1",
-            "-f",
-            "wav",
-            "pipe:1",
-        ],
-        input=data,
-        capture_output=True,
-        timeout=600,
-    )
-    if proc.returncode != 0 or not proc.stdout:
-        err = (proc.stderr or b"").decode("utf-8", errors="replace")[:800]
-        raise HTTPException(
-            status_code=502,
-            detail=f"ffmpeg could not decode this file for transcription: {err or proc.returncode}",
+    # MP4/MOV and many containers need seekable input; stdin often yields "partial file" / no streams.
+    suffix = _ffmpeg_input_suffix(filename or "upload", content_type)
+    fd: int | None = None
+    in_path: str | None = None
+    try:
+        fd, in_path = tempfile.mkstemp(suffix=suffix, prefix="inkecho-audio-")
+        os.write(fd, data)
+        os.close(fd)
+        fd = None
+        proc = subprocess.run(
+            [
+                "ffmpeg",
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-i",
+                in_path,
+                "-ar",
+                "16000",
+                "-ac",
+                "1",
+                "-f",
+                "wav",
+                "pipe:1",
+            ],
+            capture_output=True,
+            timeout=600,
         )
-    return proc.stdout
+        if proc.returncode != 0 or not proc.stdout:
+            err = (proc.stderr or b"").decode("utf-8", errors="replace")[:800]
+            raise HTTPException(
+                status_code=502,
+                detail=f"ffmpeg could not decode this file for transcription: {err or proc.returncode}",
+            )
+        return proc.stdout
+    finally:
+        if fd is not None:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+        if in_path:
+            try:
+                os.unlink(in_path)
+            except OSError:
+                pass
 
 
 async def _openrouter_transcribe(filename: str, content_type: str | None, data: bytes) -> dict[str, Any]:
@@ -140,12 +179,12 @@ async def _openrouter_transcribe(filename: str, content_type: str | None, data: 
         raise HTTPException(status_code=500, detail="OpenRouter requested but OPENROUTER_API_KEY is missing")
     # With ffmpeg: normalize all uploads/recording formats to WAV so OpenRouter sees a supported container.
     if shutil.which("ffmpeg"):
-        data = _ffmpeg_bytes_to_wav_pcm16_mono(data)
+        data = _ffmpeg_bytes_to_wav_pcm16_mono(data, filename, content_type)
         fmt = "wav"
     else:
         fmt = _openrouter_audio_format(filename, content_type)
         if fmt == "webm" or (content_type and "webm" in content_type.lower()):
-            data = _ffmpeg_bytes_to_wav_pcm16_mono(data)
+            data = _ffmpeg_bytes_to_wav_pcm16_mono(data, filename, content_type)
             fmt = "wav"
 
     b64 = base64.b64encode(data).decode("ascii")

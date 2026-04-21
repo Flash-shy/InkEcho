@@ -92,7 +92,7 @@ export default function App() {
         <div className="hero-top">
           <div className="hero-brand">
             <h1>InkEcho</h1>
-            <p className="tagline">Capture · Transcribe · Summarize · Ask</p>
+            <p className="tagline">Listen · Transcribe · Sessions · Ask</p>
           </div>
           <div className="hero-controls">
             <label className="theme-control">
@@ -111,59 +111,63 @@ export default function App() {
             <PlatformStatusMenu apiUnreachable={!healthLoading && !!healthError} />
           </div>
         </div>
-        <div className="tablist" role="tablist" aria-label="Main workflow">
-          <button
-            type="button"
-            role="tab"
-            id={`${tabIds}-tab-listen`}
-            aria-selected={mainTab === "listen"}
-            aria-controls={listenPanelId}
-            tabIndex={mainTab === "listen" ? 0 : -1}
-            className={`tab-pill ${mainTab === "listen" ? "tab-pill-active" : ""}`}
-            onClick={() => setMainTabPersist("listen")}
-          >
-            Listen
-          </button>
-          <button
-            type="button"
-            role="tab"
-            id={`${tabIds}-tab-transcribe`}
-            aria-selected={mainTab === "transcribe"}
-            aria-controls={transcribePanelId}
-            tabIndex={mainTab === "transcribe" ? 0 : -1}
-            className={`tab-pill ${mainTab === "transcribe" ? "tab-pill-active" : ""}`}
-            onClick={() => setMainTabPersist("transcribe")}
-          >
-            Transcribe
-          </button>
-          <button
-            type="button"
-            role="tab"
-            id={`${tabIds}-tab-sessions`}
-            aria-selected={mainTab === "sessions"}
-            aria-controls={sessionsPanelId}
-            tabIndex={mainTab === "sessions" ? 0 : -1}
-            className={`tab-pill ${mainTab === "sessions" ? "tab-pill-active" : ""}`}
-            onClick={() => setMainTabPersist("sessions")}
-          >
-            Sessions
-          </button>
-          <button
-            type="button"
-            role="tab"
-            id={`${tabIds}-tab-rag`}
-            aria-selected={mainTab === "rag"}
-            aria-controls={ragPanelId}
-            tabIndex={mainTab === "rag" ? 0 : -1}
-            className={`tab-pill ${mainTab === "rag" ? "tab-pill-active" : ""}`}
-            onClick={() => setMainTabPersist("rag")}
-          >
-            Ask
-          </button>
-        </div>
       </header>
 
       <section className="card workflow-card" aria-label="Workflow">
+        <div className="workflow-tab-strip">
+          <p className="workflow-tab-strip-label">Workflow</p>
+          <div className="tablist workflow-tablist" role="tablist" aria-label="Main workflow">
+            <button
+              type="button"
+              role="tab"
+              id={`${tabIds}-tab-listen`}
+              aria-selected={mainTab === "listen"}
+              aria-controls={listenPanelId}
+              tabIndex={mainTab === "listen" ? 0 : -1}
+              className={`tab-pill ${mainTab === "listen" ? "tab-pill-active" : ""}`}
+              onClick={() => setMainTabPersist("listen")}
+            >
+              Listen
+            </button>
+            <button
+              type="button"
+              role="tab"
+              id={`${tabIds}-tab-transcribe`}
+              aria-selected={mainTab === "transcribe"}
+              aria-controls={transcribePanelId}
+              tabIndex={mainTab === "transcribe" ? 0 : -1}
+              className={`tab-pill ${mainTab === "transcribe" ? "tab-pill-active" : ""}`}
+              onClick={() => setMainTabPersist("transcribe")}
+            >
+              Transcribe
+            </button>
+            <button
+              type="button"
+              role="tab"
+              id={`${tabIds}-tab-sessions`}
+              aria-selected={mainTab === "sessions"}
+              aria-controls={sessionsPanelId}
+              tabIndex={mainTab === "sessions" ? 0 : -1}
+              className={`tab-pill ${mainTab === "sessions" ? "tab-pill-active" : ""}`}
+              onClick={() => setMainTabPersist("sessions")}
+            >
+              Sessions
+            </button>
+            <button
+              type="button"
+              role="tab"
+              id={`${tabIds}-tab-rag`}
+              aria-selected={mainTab === "rag"}
+              aria-controls={ragPanelId}
+              tabIndex={mainTab === "rag" ? 0 : -1}
+              className={`tab-pill ${mainTab === "rag" ? "tab-pill-active" : ""}`}
+              onClick={() => setMainTabPersist("rag")}
+            >
+              Ask
+            </button>
+          </div>
+        </div>
+        <div className="workflow-panel-body">
         {/* Keep panels mounted so Listen (upload / recording state) survives tab switches */}
         <div
           id={listenPanelId}
@@ -221,6 +225,7 @@ export default function App() {
         >
           <h2 className="workflow-title">Ask across sessions</h2>
           <RagPanel active={mainTab === "rag"} />
+        </div>
         </div>
       </section>
 

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { ragAnswer, reindexSessionForRag, semanticSearch } from "./inkecho";
 import type { RagAnswerResponse, RagSearchResponse } from "./inkecho";
@@ -28,6 +28,20 @@ export function RagPanel({ active }: Props) {
 
   const [reindexBusy, setReindexBusy] = useState<string | null>(null);
   const [reindexMsg, setReindexMsg] = useState<string | null>(null);
+
+  const searchOutputRef = useRef<HTMLDivElement>(null);
+  const answerOutputRef = useRef<HTMLDivElement>(null);
+  const prevSearchLoadingRef = useRef(false);
+  const prevAnswerLoadingRef = useRef(false);
+
+  const scrollToEl = (el: HTMLElement | null) => {
+    if (!el) return;
+    requestAnimationFrame(() =>
+      requestAnimationFrame(() => {
+        el.scrollIntoView({ behavior: "smooth", block: "start", inline: "nearest" });
+      }),
+    );
+  };
 
   const refreshSessions = useCallback(async () => {
     setSessionsErr(null);
@@ -60,6 +74,22 @@ export function RagPanel({ active }: Props) {
     });
   }, [scopeIdsKey, query, searchLimit, answerLimit, searchOut, answerOut]);
 
+  useEffect(() => {
+    const finished = prevSearchLoadingRef.current && !searchLoading;
+    prevSearchLoadingRef.current = searchLoading;
+    if (finished && (searchOut != null || Boolean(searchErr))) {
+      scrollToEl(searchOutputRef.current);
+    }
+  }, [searchLoading, searchOut, searchErr]);
+
+  useEffect(() => {
+    const finished = prevAnswerLoadingRef.current && !answerLoading;
+    prevAnswerLoadingRef.current = answerLoading;
+    if (finished && (answerOut != null || Boolean(answerErr))) {
+      scrollToEl(answerOutputRef.current);
+    }
+  }, [answerLoading, answerOut, answerErr]);
+
   const toggleScope = (id: string) => {
     setScopeIds((prev) => {
       const next = new Set(prev);
@@ -79,6 +109,8 @@ export function RagPanel({ active }: Props) {
     setSearchLoading(true);
     setSearchErr(null);
     setSearchOut(null);
+    setAnswerErr(null);
+    setAnswerOut(null);
     try {
       const out = await semanticSearch({
         query: q,
@@ -99,6 +131,8 @@ export function RagPanel({ active }: Props) {
     setAnswerLoading(true);
     setAnswerErr(null);
     setAnswerOut(null);
+    setSearchErr(null);
+    setSearchOut(null);
     try {
       const out = await ragAnswer({
         question: q,
@@ -150,7 +184,7 @@ export function RagPanel({ active }: Props) {
         <div className="rag-actions">
           <button
             type="button"
-            className="btn btn-secondary"
+            className="btn btn-primary"
             disabled={searchLoading || !query.trim()}
             onClick={() => void runSearch()}
           >
@@ -230,59 +264,63 @@ export function RagPanel({ active }: Props) {
         {reindexMsg && <div className="banner-info rag-reindex-msg">{reindexMsg}</div>}
       </div>
 
-      {searchErr && <div className="banner-err">{searchErr}</div>}
-      {searchOut && (
-        <div className="rag-results card-inner">
-          <h3 className="rag-results-title">Search results</h3>
-          <p className="muted rag-model">Embedding model: {searchOut.model}</p>
-          {searchOut.hits.length === 0 ? (
-            <p className="muted">No hits. Transcribe sessions and wait for auto-index, or Re-index a ready session.</p>
-          ) : (
-            <ul className="rag-hit-list">
-              {searchOut.hits.map((h, i) => (
-                <li key={`${h.session_id}-${h.chunk_index}-${i}`} className="rag-hit">
-                  <div className="rag-hit-meta">
-                    <span className="rag-hit-score" title="Cosine similarity">
-                      {h.score.toFixed(4)}
-                    </span>
-                    <span className="rag-hit-session">{h.session_title || "Untitled"}</span>
-                    <code className="rag-hit-id">{h.session_id}</code>
-                    <span className="muted">
-                      seq {h.segment_start_seq}–{h.segment_end_seq}
-                    </span>
-                  </div>
-                  <p className="rag-hit-text">{h.text}</p>
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
-      )}
-
-      {answerErr && <div className="banner-err">{answerErr}</div>}
-      {answerOut && (
-        <div className="rag-answer-block card-inner">
-          <h3 className="rag-results-title">Answer</h3>
-          <div className="rag-answer-body">{answerOut.answer}</div>
-          {answerOut.citations.length > 0 && (
-            <>
-              <h4 className="rag-citations-title">Sources</h4>
+      <div ref={searchOutputRef} className="rag-output-anchor" id="rag-search-output">
+        {searchErr && <div className="banner-err">{searchErr}</div>}
+        {searchOut && (
+          <div className="rag-results card-inner">
+            <h3 className="rag-results-title">Search results</h3>
+            <p className="muted rag-model">Embedding model: {searchOut.model}</p>
+            {searchOut.hits.length === 0 ? (
+              <p className="muted">No hits. Transcribe sessions and wait for auto-index, or Re-index a ready session.</p>
+            ) : (
               <ul className="rag-hit-list">
-                {answerOut.citations.map((h, i) => (
-                  <li key={`cit-${h.session_id}-${i}`} className="rag-hit rag-hit-compact">
+                {searchOut.hits.map((h, i) => (
+                  <li key={`${h.session_id}-${h.chunk_index}-${i}`} className="rag-hit">
                     <div className="rag-hit-meta">
-                      <strong className="rag-cit-idx">[{i}]</strong>
-                      <span>{h.session_title || "Untitled"}</span>
+                      <span className="rag-hit-score" title="Cosine similarity">
+                        {h.score.toFixed(4)}
+                      </span>
+                      <span className="rag-hit-session">{h.session_title || "Untitled"}</span>
                       <code className="rag-hit-id">{h.session_id}</code>
+                      <span className="muted">
+                        seq {h.segment_start_seq}–{h.segment_end_seq}
+                      </span>
                     </div>
                     <p className="rag-hit-text">{h.text}</p>
                   </li>
                 ))}
               </ul>
-            </>
-          )}
-        </div>
-      )}
+            )}
+          </div>
+        )}
+      </div>
+
+      <div ref={answerOutputRef} className="rag-output-anchor" id="rag-answer-output">
+        {answerErr && <div className="banner-err">{answerErr}</div>}
+        {answerOut && (
+          <div className="rag-answer-block card-inner">
+            <h3 className="rag-results-title">Answer</h3>
+            <div className="rag-answer-body">{answerOut.answer}</div>
+            {answerOut.citations.length > 0 && (
+              <>
+                <h4 className="rag-citations-title">Sources</h4>
+                <ul className="rag-hit-list">
+                  {answerOut.citations.map((h, i) => (
+                    <li key={`cit-${h.session_id}-${i}`} className="rag-hit rag-hit-compact">
+                      <div className="rag-hit-meta">
+                        <strong className="rag-cit-idx">[{i}]</strong>
+                        <span>{h.session_title || "Untitled"}</span>
+                        <code className="rag-hit-id">{h.session_id}</code>
+                      </div>
+                      <p className="rag-hit-text">{h.text}</p>
+                    </li>
+                  ))}
+                </ul>
+              </>
+            )}
+          </div>
+        )}
+      </div>
     </div>
   );
 }

@@ -34,9 +34,9 @@ body {
 }
 
 #root {
-  max-width: 58rem;
+  max-width: min(76rem, calc(100vw - 2.5rem));
   margin: 0 auto;
-  padding: 2rem 1.25rem 4rem;
+  padding: 1.75rem clamp(1rem, 3vw, 2rem) 4rem;
 }
 
 code {
@@ -54,7 +54,7 @@ code {
 }
 
 .hero {
-  margin-bottom: 1.75rem;
+  margin-bottom: 1.35rem;
 }
 
 .hero-top {
@@ -209,6 +209,45 @@ code {
   margin-top: 1.25rem;
 }
 
+.workflow-tab-strip {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem 1.25rem;
+  margin: -1.25rem -1.35rem 1.35rem;
+  padding: 1rem 1.35rem 1.1rem;
+  border-bottom: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.02);
+  border-radius: var(--radius) var(--radius) 0 0;
+}
+
+.workflow-tab-strip-label {
+  margin: 0;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-muted);
+}
+
+.workflow-tablist {
+  margin-top: 0;
+  flex: 1 1 auto;
+  justify-content: flex-end;
+  gap: 0.45rem;
+}
+
+@media (max-width: 520px) {
+  .workflow-tablist {
+    justify-content: flex-start;
+  }
+}
+
+.workflow-panel-body {
+  min-width: 0;
+}
+
 .tab-pill {
   font-size: 0.78rem;
   font-weight: 600;
@@ -341,10 +380,16 @@ code {
 }
 
 .listen-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.6rem;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(11.5rem, 1fr));
+  gap: 0.65rem;
   margin-bottom: 1rem;
+  max-width: 44rem;
+}
+
+.listen-actions .btn {
+  width: 100%;
+  justify-self: stretch;
 }
 
 .btn {
@@ -1270,6 +1315,7 @@ code {
 .platform-check-count {
   font-weight: 600;
   font-variant-numeric: tabular-nums;
+  word-break: break-word;
 }
 
 .platform-check-state {
@@ -1450,6 +1496,10 @@ code {
   flex-wrap: wrap;
   gap: 0.55rem;
   margin-bottom: 0.75rem;
+}
+
+.rag-output-anchor {
+  scroll-margin-top: 1.25rem;
 }
 
 .rag-limits {

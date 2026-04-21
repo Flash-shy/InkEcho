@@ -2,6 +2,10 @@
 name: your-skill-id
 description: >-
   One or two sentences: what this skill does and when an agent should load it (triggers, inputs).
+# Optional — extra MCP tool for this folder (see skills/README.md):
+# mcp_tool: skill_your_skill_id
+# mcp_bind: instructions_only
+# mcp_register: false
 ---
 
 # Human-readable title

@@ -5,7 +5,7 @@ type PlatformCheck = {
   label: string;
   ok: boolean;
   error?: string | null;
-  /** e.g. MCP probe line: pid · mode · port · stdio */
+  /** e.g. bundled skills from AI-API, or MCP /health platform_detail fallback */
   detail?: string | null;
 };
 
@@ -74,7 +74,7 @@ export function PlatformStatusMenu({ apiUnreachable }: Props) {
         { id: "backend", label: "Backend API", ok: false, error: "Cannot reach API", detail: null },
         { id: "frontend", label: "Web frontend", ok: false, error: "—", detail: null },
         { id: "ai_api", label: "AI-API", ok: false, error: "—", detail: null },
-        { id: "mcp", label: "MCP server", ok: false, error: "—", detail: null },
+        { id: "mcp", label: "MCP & skills", ok: false, error: "—", detail: null },
       ]
     : serverChecks;
 

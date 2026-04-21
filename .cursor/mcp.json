@@ -1,13 +1,8 @@
 {
   "mcpServers": {
     "ink-echo": {
-      "command": "node",
-      "args": ["apps/mcp-server/dist/index.js"],
-      "cwd": "${workspaceFolder}",
-      "env": {
-        "INK_ECHO_BACKEND_URL": "http://127.0.0.1:8000",
-        "INK_ECHO_MCP_HEALTH_PORT": "0"
-      }
+      "type": "streamable-http",
+      "url": "http://127.0.0.1:3033/mcp"
     }
   }
 }

@@ -10,8 +10,8 @@
     "dev:mcp": "npm run dev -w @ink-echo/mcp-server",
     "build:web": "vite build --config ./apps/web/vite.config.ts",
     "build:mcp": "npm run build -w @ink-echo/mcp-server",
-    "inspect:mcp": "npm run build:mcp && npx -y @modelcontextprotocol/inspector node apps/mcp-server/dist/index.js",
-    "inspect:mcp:cli": "npm run build:mcp && npx -y @modelcontextprotocol/inspector --cli node apps/mcp-server/dist/index.js",
+    "inspect:mcp": "npm run build:mcp && npx -y @modelcontextprotocol/inspector --transport http --server-url http://127.0.0.1:3033/mcp",
+    "inspect:mcp:cli": "npm run build:mcp && npx -y @modelcontextprotocol/inspector --cli --transport http --server-url http://127.0.0.1:3033/mcp",
     "test:mcp": "npm run build:mcp && node scripts/test-mcp-smoke.mjs"
   },
   "engines": {

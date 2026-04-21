@@ -459,7 +459,7 @@ export function ListenPanel({ onClipReady }: ListenPanelProps) {
         <button type="button" className="btn btn-primary" onClick={onCaptureTab} disabled={phase === "recording"}>
           Capture tab / screen
         </button>
-        <button type="button" className="btn" onClick={onMicOnly} disabled={phase === "recording"}>
+        <button type="button" className="btn btn-primary" onClick={onMicOnly} disabled={phase === "recording"}>
           Microphone only
         </button>
         {phase === "recording" && (

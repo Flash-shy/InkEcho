@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Start InkEcho HTTP/Web dev processes: backend (8000), ai-api (8001), web (5173),
-# plus MCP HTTP /health on 3033 (health-only) so GET /health/platform shows MCP OK.
-# Full stdio MCP for Cursor is still configured separately in the IDE; see printed instructions.
+# Start InkEcho dev: backend (8000), ai-api (8001), web (5173), MCP Streamable HTTP (3033).
+#
+# MCP exposes POST /mcp and GET /health (Platform). Cursor: .cursor/mcp.json → streamable-http URL.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -11,16 +11,19 @@ mkdir -p "$LOG_DIR"
 DO_DOCKER=false
 CLEAN_PORTS=true
 ATTACH=false
+NO_MCP=false
 for arg in "$@"; do
   case "$arg" in
     --docker) DO_DOCKER=true ;;
     --no-clean) CLEAN_PORTS=false ;;
     --attach | --foreground) ATTACH=true ;;
+    --no-mcp) NO_MCP=true ;;
     -h | --help)
-      echo "Usage: $0 [--docker] [--no-clean] [--attach]"
+      echo "Usage: $0 [--docker] [--no-clean] [--attach] [--no-mcp]"
       echo "  --docker     Run 'docker compose up -d' first (Postgres + MinIO)."
-      echo "  --no-clean   Do not free ports 8000/8001/5173 before starting."
+      echo "  --no-clean   Do not free ports 8000/8001/5173/3033 before starting."
       echo "  --attach     Block this terminal and stop all on Ctrl+C (default: background)."
+      echo "  --no-mcp     Do not start apps/mcp-server (Streamable HTTP on :3033)."
       exit 0
       ;;
   esac
@@ -35,7 +38,6 @@ cleanup() {
   done
 }
 
-# During setup, Ctrl+C stops anything we already started.
 trap 'cleanup; exit 130' INT TERM
 
 ensure_venv() (
@@ -82,17 +84,18 @@ PIDS+=($!)
 ) >>"$LOG_DIR/web.log" 2>&1 &
 PIDS+=($!)
 
-if [[ ! -f "$ROOT/apps/mcp-server/dist/index.js" ]]; then
-  (cd "$ROOT" && npm run build:mcp)
+if [[ "$NO_MCP" != true ]]; then
+  if [[ ! -f "$ROOT/apps/mcp-server/dist/index.js" ]]; then
+    (cd "$ROOT" && npm run build:mcp)
+  fi
+  (
+    cd "$ROOT"
+    export INK_ECHO_BACKEND_URL="${INK_ECHO_BACKEND_URL:-http://127.0.0.1:8000}"
+    export INK_ECHO_MCP_HTTP_PORT="${INK_ECHO_MCP_HTTP_PORT:-3033}"
+    exec node apps/mcp-server/dist/index.js
+  ) >>"$LOG_DIR/mcp.log" 2>&1 &
+  PIDS+=($!)
 fi
-
-(
-  cd "$ROOT"
-  export INK_ECHO_MCP_MODE=health-only
-  export INK_ECHO_MCP_HEALTH_PORT=3033
-  exec node apps/mcp-server/dist/index.js
-) >>"$LOG_DIR/mcp-health.log" 2>&1 &
-PIDS+=($!)
 
 printf '%s\n' "${PIDS[@]}" >"$LOG_DIR/dev-all.pids"
 
@@ -101,30 +104,26 @@ echo "InkEcho dev (PIDs ${PIDS[*]}) — logs: $LOG_DIR"
 echo "  Backend   http://127.0.0.1:8000/health"
 echo "  AI-API    http://127.0.0.1:8001/health"
 echo "  Web       http://127.0.0.1:5173/"
-echo "  MCP /health (platform only)  http://127.0.0.1:3033/health"
+if [[ "$NO_MCP" != true ]]; then
+  echo "  MCP       Streamable HTTP POST http://127.0.0.1:3033/mcp · GET /health"
+else
+  echo "  MCP       (skipped: --no-mcp)"
+fi
 echo ""
-echo "Bundled Agent Skills (not in Cursor Settings → Skills): under apps/mcp-server/skills/"
-echo "  • cross-session-retrieval-answer  • meeting-minutes"
-echo "  In chat, use InkEcho MCP tools list_skills / get_skill, or semantic_search / rag_answer / generate_meeting_minutes."
+echo "Cursor MCP: .cursor/mcp.json (streamable-http → http://127.0.0.1:3033/mcp)"
 echo ""
-echo "Cursor MCP (full stdio tools): add ink-echo-mcp in Cursor; if port 3033 is in use by dev-all, set in that config:"
-echo "  INK_ECHO_MCP_HEALTH_PORT=0"
-echo "  Or stop dev-all’s health process and run one combined process:"
-echo "    node $ROOT/apps/mcp-server/dist/index.js"
-echo ""
-echo "Tail logs: tail -f $LOG_DIR/backend.log $LOG_DIR/ai-api.log $LOG_DIR/web.log $LOG_DIR/mcp-health.log"
+echo "Tail logs: tail -f $LOG_DIR/backend.log $LOG_DIR/ai-api.log $LOG_DIR/web.log $LOG_DIR/mcp.log"
 echo "Stop all:  $ROOT/scripts/stop-all.sh"
 echo ""
 
 if [[ "$ATTACH" == true ]]; then
-  echo "Attached mode: Ctrl+C stops backend, ai-api, and web."
+  echo "Attached mode: Ctrl+C stops all started processes."
   echo ""
   trap 'cleanup; rm -f "$LOG_DIR/dev-all.pids"; exit 130' INT TERM
   wait "${PIDS[@]}"
   cleanup
   rm -f "$LOG_DIR/dev-all.pids"
 else
-  # Do not kill children when this script exits (no EXIT trap).
   trap - INT TERM
   echo "Services are running in the background; this terminal is free."
   echo "Use --attach if you want to block here and stop with Ctrl+C."

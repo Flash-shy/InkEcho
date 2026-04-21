@@ -32,6 +32,13 @@ class Settings(BaseSettings):
     )
 
     service_token: str = Field(default="dev-change-me", validation_alias="AI_API_SERVICE_TOKEN")
+
+    #: Same URL as backend platform (GET /health on mcp-server, default port 3033). Unset = no probe.
+    mcp_health_url: str | None = Field(default=None, validation_alias="MCP_HEALTH_URL")
+
+    #: Optional override for Streamable HTTP MCP endpoint (POST /mcp). If unset, derived from MCP_HEALTH_URL.
+    mcp_http_url: str | None = Field(default=None, validation_alias="MCP_HTTP_URL")
+
     openai_api_key: str | None = Field(default=None, validation_alias="OPENAI_API_KEY")
     openai_base_url: str = Field(default="https://api.openai.com/v1", validation_alias="OPENAI_BASE_URL")
 
@@ -64,12 +71,25 @@ class Settings(BaseSettings):
     openrouter_http_referer: str | None = Field(default=None, validation_alias="OPENROUTER_HTTP_REFERER")
     openrouter_x_title: str = Field(default="InkEcho", validation_alias="OPENROUTER_X_TITLE")
 
-    @field_validator("openai_api_key", "openrouter_api_key", mode="before")
+    @field_validator("openai_api_key", "openrouter_api_key", "mcp_health_url", "mcp_http_url", mode="before")
     @classmethod
-    def _empty_api_key_to_none(cls, v: object) -> object:
+    def _empty_str_to_none(cls, v: object) -> object:
         if v == "":
             return None
         return v
+
+    @property
+    def resolved_mcp_http_url(self) -> str | None:
+        """Streamable HTTP MCP URL (…/mcp) for the official Python MCP client."""
+        if self.mcp_http_url and str(self.mcp_http_url).strip():
+            return str(self.mcp_http_url).strip().rstrip("/")
+        u = self.mcp_health_url
+        if not u or not str(u).strip():
+            return None
+        base = str(u).strip().rstrip("/")
+        if base.endswith("/health"):
+            base = base[: -len("/health")].rstrip("/")
+        return base + "/mcp"
 
     def resolved_stt_backend(self) -> Literal["openai", "openrouter", "mock"]:
         if self.stt_provider == "openai":
